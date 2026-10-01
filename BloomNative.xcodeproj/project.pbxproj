@@ -1,0 +1,48 @@
+// !$*UTF8*$!
+{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
+000000000000000000000001 = { isa = PBXFileReference; explicitFileType = sourcecode.swift; path = "Sources/BloomLanguage.swift"; sourceTree = "<group>"; };
+000000000000000000000002 = { isa = PBXFileReference; explicitFileType = sourcecode.swift; path = "Sources/LidSensor.swift"; sourceTree = "<group>"; };
+000000000000000000000003 = { isa = PBXFileReference; explicitFileType = sourcecode.swift; path = "Sources/BloomFrames.swift"; sourceTree = "<group>"; };
+000000000000000000000004 = { isa = PBXFileReference; explicitFileType = sourcecode.swift; path = "Sources/BloomRenderer.swift"; sourceTree = "<group>"; };
+000000000000000000000005 = { isa = PBXFileReference; explicitFileType = sourcecode.swift; path = "Sources/BloomApp.swift"; sourceTree = "<group>"; };
+000000000000000000000006 = { isa = PBXFileReference; explicitFileType = sourcecode.swift; path = "Sources/BloomSaver.swift"; sourceTree = "<group>"; };
+000000000000000000000007 = { isa = PBXFileReference; explicitFileType = image.jpeg; path = "Resources/BloomPoster.jpg"; sourceTree = "<group>"; };
+000000000000000000000008 = { isa = PBXFileReference; explicitFileType = video.mp4; path = "Resources/BloomOriginal.mp4"; sourceTree = "<group>"; };
+000000000000000000000009 = { isa = PBXFileReference; explicitFileType = text; path = "Resources/Bloom.metal"; sourceTree = "<group>"; };
+00000000000000000000000A = { isa = PBXFileReference; explicitFileType = text; path = "Resources/AppIcon.icns"; sourceTree = "<group>"; };
+00000000000000000000000B = { isa = PBXFileReference; explicitFileType = text; path = "Resources/AppInfo.plist"; sourceTree = "<group>"; };
+00000000000000000000000C = { isa = PBXFileReference; explicitFileType = text; path = "Resources/SaverInfo.plist"; sourceTree = "<group>"; };
+00000000000000000000000D = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = "Bloom Native.saver"; sourceTree = BUILT_PRODUCTS_DIR; };
+00000000000000000000000E = { isa = PBXBuildFile; fileRef = 000000000000000000000006; };
+00000000000000000000000F = { isa = PBXBuildFile; fileRef = 000000000000000000000007; };
+000000000000000000000010 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (00000000000000000000000E,); runOnlyForDeploymentPostprocessing = 0; };
+000000000000000000000011 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (00000000000000000000000F,); runOnlyForDeploymentPostprocessing = 0; };
+000000000000000000000012 = { isa = XCBuildConfiguration; name = Debug; buildSettings = {ARCHS = "arm64";SDKROOT = "macosx";MACOSX_DEPLOYMENT_TARGET = "14.0";SWIFT_VERSION = "5.0";SWIFT_OPTIMIZATION_LEVEL = "-Onone";CODE_SIGN_IDENTITY = "-";CODE_SIGN_STYLE = "Manual";PRODUCT_NAME = "Bloom Native";EXECUTABLE_NAME = "BloomSaver";PRODUCT_MODULE_NAME = "BloomSaver";ALWAYS_SEARCH_USER_PATHS = "NO";INFOPLIST_FILE = "Resources/SaverInfo.plist";PRODUCT_BUNDLE_IDENTIFIER = "local.bloom.native.saver";ENABLE_APP_SANDBOX = "NO";WRAPPER_EXTENSION = "saver";MACH_O_TYPE = "mh_bundle";}; };
+000000000000000000000013 = { isa = XCBuildConfiguration; name = Release; buildSettings = {ARCHS = "arm64";SDKROOT = "macosx";MACOSX_DEPLOYMENT_TARGET = "14.0";SWIFT_VERSION = "5.0";SWIFT_OPTIMIZATION_LEVEL = "-O";CODE_SIGN_IDENTITY = "-";CODE_SIGN_STYLE = "Manual";PRODUCT_NAME = "Bloom Native";EXECUTABLE_NAME = "BloomSaver";PRODUCT_MODULE_NAME = "BloomSaver";ALWAYS_SEARCH_USER_PATHS = "NO";INFOPLIST_FILE = "Resources/SaverInfo.plist";PRODUCT_BUNDLE_IDENTIFIER = "local.bloom.native.saver";ENABLE_APP_SANDBOX = "NO";WRAPPER_EXTENSION = "saver";MACH_O_TYPE = "mh_bundle";}; };
+000000000000000000000014 = { isa = XCConfigurationList; buildConfigurations = (000000000000000000000012,000000000000000000000013,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+000000000000000000000015 = { isa = PBXNativeTarget; name = "Bloom Native Saver"; productName = "Bloom Native"; buildConfigurationList = 000000000000000000000014; buildPhases = (000000000000000000000010,000000000000000000000011,); buildRules = (); dependencies = (); productReference = 00000000000000000000000D; productType = "com.apple.product-type.bundle"; };
+000000000000000000000016 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = "Bloom Native.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+000000000000000000000017 = { isa = PBXBuildFile; fileRef = 000000000000000000000001; };
+000000000000000000000018 = { isa = PBXBuildFile; fileRef = 000000000000000000000002; };
+000000000000000000000019 = { isa = PBXBuildFile; fileRef = 000000000000000000000003; };
+00000000000000000000001A = { isa = PBXBuildFile; fileRef = 000000000000000000000004; };
+00000000000000000000001B = { isa = PBXBuildFile; fileRef = 000000000000000000000005; };
+00000000000000000000001C = { isa = PBXBuildFile; fileRef = 000000000000000000000007; };
+00000000000000000000001D = { isa = PBXBuildFile; fileRef = 000000000000000000000008; };
+00000000000000000000001E = { isa = PBXBuildFile; fileRef = 000000000000000000000009; };
+00000000000000000000001F = { isa = PBXBuildFile; fileRef = 00000000000000000000000A; };
+000000000000000000000020 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (000000000000000000000017,000000000000000000000018,000000000000000000000019,00000000000000000000001A,00000000000000000000001B,); runOnlyForDeploymentPostprocessing = 0; };
+000000000000000000000021 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (00000000000000000000001C,00000000000000000000001D,00000000000000000000001E,00000000000000000000001F,); runOnlyForDeploymentPostprocessing = 0; };
+000000000000000000000022 = { isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = (); outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = "mkdir -p \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n/usr/bin/ditto \"${BUILT_PRODUCTS_DIR}/Bloom Native.saver\" \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Bloom Native.saver\""; };
+000000000000000000000023 = { isa = XCBuildConfiguration; name = Debug; buildSettings = {ARCHS = "arm64";SDKROOT = "macosx";MACOSX_DEPLOYMENT_TARGET = "14.0";SWIFT_VERSION = "5.0";SWIFT_OPTIMIZATION_LEVEL = "-Onone";CODE_SIGN_IDENTITY = "-";CODE_SIGN_STYLE = "Manual";PRODUCT_NAME = "Bloom Native";EXECUTABLE_NAME = "BloomNative";PRODUCT_MODULE_NAME = "BloomNative";ALWAYS_SEARCH_USER_PATHS = "NO";INFOPLIST_FILE = "Resources/AppInfo.plist";PRODUCT_BUNDLE_IDENTIFIER = "local.bloom.native";ENABLE_APP_SANDBOX = "NO";}; };
+000000000000000000000024 = { isa = XCBuildConfiguration; name = Release; buildSettings = {ARCHS = "arm64";SDKROOT = "macosx";MACOSX_DEPLOYMENT_TARGET = "14.0";SWIFT_VERSION = "5.0";SWIFT_OPTIMIZATION_LEVEL = "-O";CODE_SIGN_IDENTITY = "-";CODE_SIGN_STYLE = "Manual";PRODUCT_NAME = "Bloom Native";EXECUTABLE_NAME = "BloomNative";PRODUCT_MODULE_NAME = "BloomNative";ALWAYS_SEARCH_USER_PATHS = "NO";INFOPLIST_FILE = "Resources/AppInfo.plist";PRODUCT_BUNDLE_IDENTIFIER = "local.bloom.native";ENABLE_APP_SANDBOX = "NO";}; };
+000000000000000000000025 = { isa = XCConfigurationList; buildConfigurations = (000000000000000000000023,000000000000000000000024,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+000000000000000000000026 = { isa = PBXTargetDependency; target = 000000000000000000000015; };
+000000000000000000000027 = { isa = PBXNativeTarget; name = "Bloom Native"; productName = "Bloom Native"; buildConfigurationList = 000000000000000000000025; buildPhases = (000000000000000000000020,000000000000000000000021,000000000000000000000022,); buildRules = (); dependencies = (000000000000000000000026,); productReference = 000000000000000000000016; productType = "com.apple.product-type.application"; };
+000000000000000000000028 = { isa = PBXGroup; name = Products; children = (00000000000000000000000D,000000000000000000000016,); sourceTree = "<group>"; };
+000000000000000000000029 = { isa = PBXGroup; children = (000000000000000000000001,000000000000000000000002,000000000000000000000003,000000000000000000000004,000000000000000000000005,000000000000000000000006,000000000000000000000007,000000000000000000000008,000000000000000000000009,00000000000000000000000A,00000000000000000000000B,00000000000000000000000C,000000000000000000000028,); sourceTree = "<group>"; };
+00000000000000000000002A = { isa = XCBuildConfiguration; name = Debug; buildSettings = {}; };
+00000000000000000000002B = { isa = XCBuildConfiguration; name = Release; buildSettings = {}; };
+00000000000000000000002C = { isa = XCConfigurationList; buildConfigurations = (00000000000000000000002A,00000000000000000000002B,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+00000000000000000000002D = { isa = PBXProject; buildConfigurationList = 00000000000000000000002C; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en,Base,); mainGroup = 000000000000000000000029; productRefGroup = 000000000000000000000028; projectDirPath = ""; projectRoot = ""; targets = (000000000000000000000015,000000000000000000000027,); };
+}; rootObject = 00000000000000000000002D; }

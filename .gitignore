@@ -1,0 +1,13 @@
+.DS_Store
+/build/
+/dist/
+/Backups/
+/Tests/*
+!/Tests/main.swift
+!/Tests/language.swift
+*.xcuserstate
+xcuserdata/
+# Creator artwork is fetched locally; it is not part of the source license.
+/Resources/*.jpg
+/Resources/*.mp4
+/Resources/*.part

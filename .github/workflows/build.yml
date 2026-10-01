@@ -1,0 +1,17 @@
+name: Build and language checks
+on:
+  push:
+  pull_request:
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check English and Chinese preferences
+        run: |
+          swiftc Sources/BloomLanguage.swift Tests/language.swift -o /tmp/bloom-language-check
+          /tmp/bloom-language-check
+      - name: Compile native app and screen saver
+        run: |
+          swiftc -swift-version 5 -O -target arm64-apple-macosx14.0 Sources/BloomLanguage.swift Sources/LidSensor.swift Sources/BloomFrames.swift Sources/BloomRenderer.swift Sources/BloomApp.swift -o /tmp/BloomNative -framework SwiftUI -framework MetalKit -framework IOKit
+          swiftc -swift-version 5 -O -target arm64-apple-macosx14.0 -emit-library -module-name BloomSaver Sources/BloomSaver.swift -o /tmp/BloomSaver -framework ScreenSaver
