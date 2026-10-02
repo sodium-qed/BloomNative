@@ -35,9 +35,11 @@ internal sealed class MainWindow : Window
     private Button saver = null!;
     private CameraTrackingWindow? cameraWindow;
     private bool cameraTracking;
+    private bool desktopTestPattern;
     private Slider slider = null!;
     private bool ready, quitting, downloading, rebuilding, locked, sleeping, displayOff, lidClosed, pendingReplay;
     private string? artworkError;
+    private string? desktopError;
     private uint? lastLid;
     private HwndSource? hwndSource;
     private IntPtr displayRegistration, lidRegistration;
@@ -48,7 +50,7 @@ internal sealed class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "Bloom Native · Windows 0.1.3";
+        Title = "Bloom Native · Windows 0.1.4";
         Width = 840; Height = 790; MinWidth = 620; MinHeight = 580;
         Background = new SolidColorBrush(Color.FromRgb(242, 245, 251));
         FontFamily = new FontFamily("Segoe UI"); FontSize = 14;
@@ -132,6 +134,7 @@ internal sealed class MainWindow : Window
         actions.Children.Add(replay); actions.Children.Add(saver);
         actions.Children.Add(Button(T("Webcam tracking (experimental)…", "摄像头追踪（实验性）…"), OpenCameraTracking));
         actions.Children.Add(Button(T("Hide to tray", "隐藏到托盘"), Hide));
+        actions.Children.Add(Button(T("Test desktop layer", "测试桌面图层"), TestDesktopLayer));
         actions.Children.Add(Button(T("Copy diagnostics", "复制诊断信息"), CopyDiagnostics));
         actions.Children.Add(Button(T("Quit", "退出"), Quit)); body.Children.Add(actions);
         status = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DarkSlateGray, Margin = new Thickness(0, 6, 0, 0) }; body.Children.Add(status);
@@ -197,9 +200,10 @@ internal sealed class MainWindow : Window
     {
         try
         {
-            string report = "Bloom Native Windows 0.1.3\n" +
+            string report = "Bloom Native Windows 0.1.4\n" +
                 $"Artwork verified: {ready}\nWallpaper enabled: {enabled.IsChecked == true}\nPaused: {Paused}\n" +
                 $"Camera running: {cameraWindow?.IsCameraRunning == true}\nCamera controls animation: {cameraTracking}\n" +
+                $"Desktop test pattern: {desktopTestPattern}\nLast desktop error: {desktopError ?? "none"}\n" +
                 desktop.GetDiagnostics();
             Clipboard.SetText(report);
             SetStatus(T("Diagnostics copied. Paste them into your support conversation if the wallpaper is still missing.", "诊断信息已复制。如果桌面仍未显示动画，请将信息粘贴到支持对话中。"));
@@ -211,13 +215,21 @@ internal sealed class MainWindow : Window
         if (rebuilding) return;
         if (enabled.IsChecked == true && ready)
         {
-            try { desktop.Start(settings.Progress, settings.Breathe && !cameraTracking); UpdatePaused(); if (desktop.IsRunning) SetStatus(T("Wallpaper is running behind your desktop icons.", "动态壁纸正在桌面图标下方运行。")); }
+            try
+            {
+                desktopError = null;
+                desktop.Start(settings.Progress, settings.Breathe && !cameraTracking);
+                desktop.SetDiagnosticPattern(desktopTestPattern);
+                UpdatePaused();
+                if (desktop.IsRunning) SetStatus(T("Wallpaper window attached. Minimize the controls to check that Bloom is visible; use Test desktop layer if it is missing.", "壁纸窗口已连接。请最小化控制面板，确认 Bloom 可见；若未显示，请使用“测试桌面图层”。"));
+            }
             catch (Exception ex) { ReportDesktopError(ex.Message); }
         }
-        else { desktop.Stop(); SaveSettings(); SetStatus(T("Wallpaper stopped. Your Windows wallpaper is unchanged.", "动态壁纸已停止，原有 Windows 壁纸未被更改。")); }
+        else { desktop.Stop(); desktopTestPattern = false; SaveSettings(); SetStatus(T("Wallpaper stopped. Your Windows wallpaper is unchanged.", "动态壁纸已停止，原有 Windows 壁纸未被更改。")); }
     }
     private void ReportDesktopError(string error) => Dispatcher.BeginInvoke(() =>
     {
+        desktopError = error;
         desktop.Stop(); enabled.IsChecked = false;
         SetStatus(T("Desktop wallpaper could not start: ", "无法启动动态壁纸：") + error + T(" You can still use the preview and screen saver.", "您仍可使用预览和屏幕保护程序。"));
     });
@@ -225,7 +237,7 @@ internal sealed class MainWindow : Window
     {
         if (quitting || !desktop.IsRunning) return;
         desktop.Stop();
-        try { desktop.Start(settings.Progress, settings.Breathe && !cameraTracking); UpdatePaused(); }
+        try { desktop.Start(settings.Progress, settings.Breathe && !cameraTracking); desktop.SetDiagnosticPattern(desktopTestPattern); UpdatePaused(); }
         catch (Exception ex) { ReportDesktopError(ex.Message); }
     }
     private void Replay()
@@ -233,6 +245,19 @@ internal sealed class MainWindow : Window
         if (!ready || cameraTracking) return;
         if (Paused) { pendingReplay = true; return; }
         preview?.ReplayTo(settings.Progress); desktop.ReplayTo(settings.Progress);
+    }
+    private void TestDesktopLayer()
+    {
+        if (!desktop.IsRunning)
+        {
+            SetStatus(T("Enable Dynamic desktop wallpaper before testing the desktop layer.", "请先启用动态桌面壁纸，再测试桌面图层。"));
+            return;
+        }
+        desktopTestPattern = !desktopTestPattern;
+        desktop.SetDiagnosticPattern(desktopTestPattern);
+        SetStatus(desktopTestPattern
+            ? T("Desktop test is on. Press Win+D: look for the purple/cyan BLOOM DESKTOP TEST behind your icons. Click Test desktop layer again to restore the animation.", "桌面测试已开启。按 Win+D，查看图标下方是否出现紫色/青色 BLOOM DESKTOP TEST。再次点击“测试桌面图层”恢复动画。")
+            : T("Desktop test is off; the animation is restored.", "桌面测试已关闭，已恢复动画。"));
     }
     private void UpdatePaused()
     {

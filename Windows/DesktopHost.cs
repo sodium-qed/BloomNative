@@ -25,6 +25,7 @@ internal sealed class DesktopHost : IDisposable
     private readonly List<Surface> _surfaces = new();
     private ShellLayer? _layer;
     private ShellLayer? _lastLayer;
+    private string _shellRequests = "No desktop request sent.";
     private DisplayInfo[] _displays = Array.Empty<DisplayInfo>();
     private bool _suspended;
     private bool _unhealthy;
@@ -77,8 +78,8 @@ internal sealed class DesktopHost : IDisposable
         {
             // Hide first, including when Explorer has unexpectedly reparented a window.
             foreach (Surface surface in _surfaces)
-                if (Native.IsWindow(surface.Handle))
-                    Native.ShowWindow(surface.Handle, 0);
+                if (Native.IsWindow(surface.AttachmentHandle))
+                    Native.ShowWindow(surface.AttachmentHandle, 0);
 
             foreach (Surface surface in _surfaces)
             {
@@ -93,6 +94,11 @@ internal sealed class DesktopHost : IDisposable
                 catch (InvalidOperationException)
                 {
                     // Explorer may already have destroyed its child HWNDs.
+                }
+                finally
+                {
+                    // The WPF child must be closed before its native parent.
+                    surface.NativeHost?.Dispose();
                 }
             }
             _surfaces.Clear();
@@ -135,6 +141,13 @@ internal sealed class DesktopHost : IDisposable
             surface.View.Breathe = breathe;
     }
 
+    public void SetDiagnosticPattern(bool enabled)
+    {
+        VerifyAccess();
+        foreach (Surface surface in _surfaces)
+            surface.View.SetDiagnosticPattern(enabled);
+    }
+
     public bool IsHealthy()
     {
         VerifyAccess();
@@ -153,9 +166,10 @@ internal sealed class DesktopHost : IDisposable
 
         foreach (Surface surface in _surfaces)
         {
-            if (!IsSurfaceHealthy(surface.Handle, _layer) || surface.Source.IsDisposed ||
+            if (!IsSurfaceHealthy(surface.AttachmentHandle, _layer) ||
+                !IsContentHealthy(surface.Handle, _layer, surface.NativeHost) || surface.Source.IsDisposed ||
                 !surface.Window.IsVisible || !surface.View.IsLoaded ||
-                (_layer.Nested && !surface.Source.CompositionTarget.UsesPerPixelOpacity))
+                surface.Source.CompositionTarget.UsesPerPixelOpacity)
                 return false;
         }
         return true;
@@ -173,7 +187,8 @@ internal sealed class DesktopHost : IDisposable
         text.AppendLine($"Runtime: {RuntimeInformation.FrameworkDescription}; process: {RuntimeInformation.ProcessArchitecture}");
         text.AppendLine($"Running: {IsRunning}; suspended: {_suspended}; unhealthy flag: {_unhealthy}; surfaces: {_surfaces.Count}");
         ShellLayer? layer = _layer ?? _lastLayer;
-        text.AppendLine($"Selected layout: {(layer is null ? "none" : layer.Nested ? "raised desktop / Progman sibling" : "classic WorkerW child")}; active: {_layer is not null}");
+        text.AppendLine($"Selected layout: {(layer is null ? "none" : layer.Nested ? "raised desktop / native constant-alpha Progman sibling" : "classic WorkerW child")}; active: {_layer is not null}");
+        text.AppendLine("Explorer desktop requests: " + _shellRequests);
         nint progman = Native.FindWindow("Progman", null);
         AppendWindowDiagnostic(text, "Current Progman", progman);
         if (layer is not null)
@@ -194,13 +209,18 @@ internal sealed class DesktopHost : IDisposable
         for (int index = 0; index < _surfaces.Count; index++)
         {
             Surface surface = _surfaces[index];
-            AppendWindowDiagnostic(text, $"Bloom surface {index}", surface.Handle);
+            if (surface.NativeHost is not null)
+            {
+                AppendWindowDiagnostic(text, $"Bloom native host {index}", surface.NativeHost.Handle);
+                text.AppendLine($"  Native constant alpha=255 (LWA_ALPHA only): {surface.NativeHost.IsOpaqueLayered}");
+            }
+            AppendWindowDiagnostic(text, $"Bloom WPF content {index}", surface.Handle);
             text.AppendLine($"  WPF visible={surface.Window.IsVisible}; loaded={surface.View.IsLoaded}; view visible={surface.View.IsVisible}; size={surface.View.ActualWidth:F1}x{surface.View.ActualHeight:F1}; opacity={surface.Window.Opacity:F2}; source disposed={surface.Source.IsDisposed}");
             text.AppendLine($"  Media: {surface.View.DiagnosticState}");
             if (!surface.Source.IsDisposed)
                 text.AppendLine($"  WPF per-pixel layer={surface.Source.CompositionTarget.UsesPerPixelOpacity}; render mode={surface.Source.CompositionTarget.RenderMode}; root visual={surface.Source.RootVisual is not null}");
             if (layer is not null)
-                text.AppendLine($"  Attachment healthy={IsSurfaceHealthy(surface.Handle, layer)}");
+                text.AppendLine($"  Attachment healthy={IsSurfaceHealthy(surface.AttachmentHandle, layer)}; content healthy={IsContentHealthy(surface.Handle, layer, surface.NativeHost)}");
         }
         return text.ToString();
     }
@@ -238,30 +258,33 @@ internal sealed class DesktopHost : IDisposable
         Window window = CreateWindowForLayer(view, display.Bounds, display.DpiX, display.DpiY, layer);
 
         Surface? surface = null;
+        NativeDesktopSurface? nativeHost = null;
         try
         {
+            nativeHost = CreateNativeHost(display.Bounds, layer);
             // EnsureHandle creates an invisible HWND. It is never shown as a
             // normal application window, even when attachment fails.
             nint handle = new WindowInteropHelper(window).EnsureHandle();
             HwndSource source = HwndSource.FromHwnd(handle)
                 ?? throw new InvalidOperationException("Could not create a wallpaper window.");
-            surface = new Surface(window, view, source, handle);
+            surface = new Surface(window, view, source, handle, nativeHost);
             _surfaces.Add(surface);
             source.AddHook(WindowMessage);
 
             if (!Native.AreDpiAwarenessContextsEqual(parentContext, Native.GetWindowDpiAwarenessContext(handle)))
                 throw new InvalidOperationException("Explorer and the wallpaper use incompatible DPI modes.");
 
-            AttachWindow(handle, layer);
-            PositionWindow(handle, display.Bounds, layer);
+            AttachWindow(handle, layer, nativeHost);
+            PositionWindow(handle, display.Bounds, layer, nativeHost);
             if (!IsValidLayer(layer))
                 throw new InvalidOperationException("The Windows desktop changed during attachment.");
 
+            nativeHost?.Show();
             window.Show();
             // WPF's Show performs its own initial sizing. Reapply the native
             // bounds afterward, in physical pixels, including negative origins.
-            PositionWindow(handle, display.Bounds, layer);
-            if (!IsSurfaceHealthy(handle, layer))
+            PositionWindow(handle, display.Bounds, layer, nativeHost);
+            if (!IsSurfaceHealthy(surface.AttachmentHandle, layer) || !IsContentHealthy(handle, layer, nativeHost))
                 throw new InvalidOperationException("Windows did not preserve the visible wallpaper layer and icon order.");
         }
         catch
@@ -270,7 +293,8 @@ internal sealed class DesktopHost : IDisposable
             {
                 view.PlaybackFailed -= OnPlaybackFailed;
                 view.Dispose();
-                window.Close();
+                try { window.Close(); }
+                finally { nativeHost?.Dispose(); }
             }
             throw;
         }
@@ -288,12 +312,9 @@ internal sealed class DesktopHost : IDisposable
         ShowActivated = false,
         Focusable = false,
         IsHitTestVisible = false,
-        // A raised desktop requires a layered sibling of the stock WorkerW.
-        // WPF removes manually added WS_EX_LAYERED on an opaque HWND, so let
-        // WPF own layering. The opaque background and Opacity=1 keep the output
-        // opaque. Do not call SetLayeredWindowAttributes: it blocks WPF's
-        // UpdateLayeredWindow rendering until the layer style is reset.
-        AllowsTransparency = layer.Nested,
+        // Keep media on WPF's ordinary opaque render path. Raised desktops use
+        // a separate native, constant-alpha parent; WPF does not own that layer.
+        AllowsTransparency = false,
         Opacity = 1,
         Background = Brushes.Black,
         Content = content,
@@ -302,7 +323,23 @@ internal sealed class DesktopHost : IDisposable
         WindowStartupLocation = WindowStartupLocation.Manual
     };
 
-    internal static void AttachWindow(nint handle, ShellLayer layer)
+    internal static NativeDesktopSurface? CreateNativeHost(Rectangle bounds, ShellLayer layer)
+    {
+        if (!layer.Nested) return null;
+        var host = new NativeDesktopSurface(layer.SurfaceParent);
+        try
+        {
+            PositionWindow(host.Handle, bounds, layer);
+            return host;
+        }
+        catch
+        {
+            host.Dispose();
+            throw;
+        }
+    }
+
+    internal static void AttachWindow(nint handle, ShellLayer layer, NativeDesktopSurface? nativeHost = null)
     {
         // SetParent does not adjust WS_CHILD/WS_POPUP itself.
         long style = Native.GetStyle(handle, Native.GwlStyle);
@@ -312,15 +349,16 @@ internal sealed class DesktopHost : IDisposable
         Native.SetStyle(handle, Native.GwlExStyle,
             (extended & ~Native.WsExAppWindow) | Native.WsExToolWindow | Native.WsExNoActivate | Native.WsExTransparent);
 
-        Native.SetParent(handle, layer.SurfaceParent);
-        if (Native.GetParent(handle) != layer.SurfaceParent)
+        nint parent = nativeHost?.Handle ?? layer.SurfaceParent;
+        Native.SetParent(handle, parent);
+        if (Native.GetParent(handle) != parent)
             throw new Win32Exception(Marshal.GetLastPInvokeError(), "Explorer rejected the wallpaper window.");
     }
 
-    internal static void PositionWindow(nint handle, Rectangle bounds, ShellLayer layer)
+    internal static void PositionWindow(nint handle, Rectangle bounds, ShellLayer layer, NativeDesktopSurface? nativeHost = null)
     {
         using var dpi = new DpiContext(Native.PerMonitorV2);
-        nint parent = layer.SurfaceParent;
+        nint parent = nativeHost?.Handle ?? layer.SurfaceParent;
         var target = new Native.Rect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
         int mapped = Native.MapWindowPoints(0, parent, ref target, 2);
         if (mapped == 0 && Marshal.GetLastPInvokeError() != 0)
@@ -333,7 +371,7 @@ internal sealed class DesktopHost : IDisposable
 
         // In the raised layout we are a Progman sibling: below the icon view,
         // above Explorer's stock wallpaper WorkerW. Never reorder shell HWNDs.
-        nint insertAfter = layer.Nested ? layer.IconView : 0;
+        nint insertAfter = layer.Nested && nativeHost is null ? layer.IconView : 0;
         if (!Native.SetWindowPos(handle, insertAfter, target.Left, target.Top,
                 target.Right - target.Left, target.Bottom - target.Top,
                 Native.SwpNoActivate | Native.SwpFrameChanged | Native.SwpNoOwnerZOrder))
@@ -352,6 +390,18 @@ internal sealed class DesktopHost : IDisposable
             return true;
         return (Native.GetStyle(handle, Native.GwlExStyle) & Native.WsExLayered) != 0 &&
             IsBelow(layer.IconView, handle) && IsBelow(handle, layer.Worker);
+    }
+
+    internal static bool IsContentHealthy(nint handle, ShellLayer layer, NativeDesktopSurface? nativeHost = null)
+    {
+        nint parent = nativeHost?.Handle ?? layer.SurfaceParent;
+        if (!Native.IsWindow(handle) || !Native.IsWindowVisible(handle) || Native.GetParent(handle) != parent)
+            return false;
+        long style = Native.GetStyle(handle, Native.GwlStyle);
+        if ((style & Native.WsChild) == 0 || (style & Native.WsPopup) != 0 ||
+            (Native.GetStyle(handle, Native.GwlExStyle) & Native.WsExLayered) != 0)
+            return false;
+        return !layer.Nested || nativeHost?.IsOpaqueLayered == true;
     }
 
     private nint WindowMessage(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
@@ -404,8 +454,10 @@ internal sealed class DesktopHost : IDisposable
             }).ToArray();
     }
 
-    private static ShellLayer FindDesktopLayer()
+    private ShellLayer FindDesktopLayer()
     {
+        _lastLayer = null;
+        _shellRequests = "No desktop request sent.";
         nint progman = Native.FindWindow("Progman", null);
         if (progman == 0)
             throw new InvalidOperationException("Windows Explorer's desktop is unavailable.");
@@ -414,16 +466,23 @@ internal sealed class DesktopHost : IDisposable
         // versions. Only verified WorkerW arrangements are accepted below.
         // D/1 explicitly asks Explorer to enable the raised desktop. A bare
         // 0/0 request can leave the modern stock wallpaper covering our HWND.
-        Native.SendMessageTimeout(progman, 0x052C, 0xD, 1, 0x0002, 1000, out _);
+        _shellRequests = SendDesktopRequest(progman, 0xD, 1);
         ShellLayer? layer = LocateDesktopLayer(progman);
         if (layer is null)
         {
-            Native.SendMessageTimeout(progman, 0x052C, 0, 0, 0x0002, 1000, out _);
-            Native.SendMessageTimeout(progman, 0x052C, 0xD, 1, 0x0002, 1000, out _);
+            _shellRequests += "; " + SendDesktopRequest(progman, 0, 0);
+            _shellRequests += "; " + SendDesktopRequest(progman, 0xD, 1);
             layer = LocateDesktopLayer(progman);
         }
         return layer ?? throw new InvalidOperationException(
             "Explorer did not expose a supported background layer. Your existing wallpaper has been left in place.");
+    }
+
+    private static string SendDesktopRequest(nint progman, nint wParam, nint lParam)
+    {
+        nint sent = Native.SendMessageTimeout(progman, 0x052C, wParam, lParam, 0x0002, 1000, out nint result);
+        int error = sent == 0 ? Marshal.GetLastPInvokeError() : 0;
+        return $"0x052C({wParam:X},{lParam:X}): delivered={sent != 0}, result=0x{result:X}, error={error}";
     }
 
     private static ShellLayer? LocateDesktopLayer(nint progman)
@@ -546,7 +605,10 @@ internal sealed class DesktopHost : IDisposable
     }
 
     private sealed record DisplayInfo(string DeviceName, Rectangle Bounds, uint DpiX, uint DpiY, bool Primary);
-    private sealed record Surface(Window Window, BloomView View, HwndSource Source, nint Handle);
+    private sealed record Surface(Window Window, BloomView View, HwndSource Source, nint Handle, NativeDesktopSurface? NativeHost)
+    {
+        internal nint AttachmentHandle => NativeHost?.Handle ?? Handle;
+    }
     internal sealed record ShellLayer(nint Progman, nint Worker, nint IconHost, nint IconView, uint ProcessId, bool Nested)
     {
         internal nint SurfaceParent => Nested ? Progman : Worker;

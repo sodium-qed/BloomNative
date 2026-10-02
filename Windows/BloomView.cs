@@ -14,6 +14,7 @@ public sealed class BloomView : UserControl, IDisposable
 {
     private readonly string videoPath;
     private readonly MediaElement media;
+    private readonly Grid diagnosticPattern;
     private readonly ScaleTransform scale = new ScaleTransform(1, 1);
     private readonly TranslateTransform translation = new TranslateTransform();
     private readonly DispatcherTimer timer;
@@ -53,7 +54,28 @@ public sealed class BloomView : UserControl, IDisposable
         transforms.Children.Add(scale);
         transforms.Children.Add(translation);
         media.RenderTransform = transforms;
-        Content = media;
+        var content = new Grid();
+        content.Children.Add(media);
+        diagnosticPattern = new Grid { Background = Brushes.Magenta, Visibility = Visibility.Collapsed, IsHitTestVisible = false };
+        diagnosticPattern.ColumnDefinitions.Add(new ColumnDefinition());
+        diagnosticPattern.ColumnDefinitions.Add(new ColumnDefinition());
+        var cyan = new Border { Background = Brushes.Cyan };
+        Grid.SetColumn(cyan, 1);
+        diagnosticPattern.Children.Add(cyan);
+        var label = new Border
+        {
+            Background = Brushes.White,
+            Padding = new Thickness(24),
+            Margin = new Thickness(30),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock { Text = "BLOOM DESKTOP TEST", Foreground = Brushes.Black,
+                FontSize = 38, FontWeight = FontWeights.Bold, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center }
+        };
+        Grid.SetColumnSpan(label, 2);
+        diagnosticPattern.Children.Add(label);
+        content.Children.Add(diagnosticPattern);
+        Content = content;
         timer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher)
         {
             Interval = TimeSpan.FromSeconds(1.0 / 30.0)
@@ -78,6 +100,12 @@ public sealed class BloomView : UserControl, IDisposable
             if (!MotionEnabled) ResetTransform();
             UpdateActivity();
         }
+    }
+
+    /// <summary>Explicit desktop-only visual check, independent of decoded video pixels.</summary>
+    public void SetDiagnosticPattern(bool visible)
+    {
+        if (!disposed) diagnosticPattern.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>Pause on a frame. Values outside [0, 1] are clamped.</summary>

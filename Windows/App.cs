@@ -19,7 +19,8 @@ internal sealed class App : Application
         {
             if (options.Mode == LaunchMode.SelfTest)
             {
-                // Exercise actual WPF initialization on a Windows runner, without network or desktop mutations.
+                // Exercise WPF and briefly show an owned synthetic pixel fixture.
+                // No Explorer windows, wallpaper settings, camera or network are changed.
                 var window = new Window { Width = 240, Height = 120, ShowInTaskbar = false, Content = new TextBlock { Text = "Bloom Native smoke check" } };
                 window.Show();
                 window.UpdateLayout();
@@ -37,10 +38,11 @@ internal sealed class App : Application
                     passed,
                     runtime = Environment.Version.ToString(),
                     os = Environment.OSVersion.ToString(),
-                    desktopAttachment = new { passed = desktopAttachment.Passed, assertions = desktopAttachment.Assertions, scope = desktopAttachment.Scope },
+                    desktopAttachment = new { passed = desktopAttachment.Passed, assertions = desktopAttachment.Assertions,
+                        compositionVerified = desktopAttachment.CompositionVerified, scope = desktopAttachment.Scope },
                     cameraApiAvailable,
                     cameraPixelCopy,
-                    scope = "WPF initialization, owned HWND desktop-attachment fixture, WinRT API availability and in-memory camera pixel conversion; no camera activation, artwork, playback, real Explorer embedding, or hardware validation"
+                    scope = "WPF initialization, owned on-screen HWND/DWM pixel fixture, WinRT API availability and in-memory camera pixel conversion; no camera activation, artwork, playback, real Explorer embedding, or hardware validation"
                 }));
                 return passed ? 0 : 1;
             }
@@ -53,7 +55,7 @@ internal sealed class App : Application
             using var mutex = new Mutex(true, "Local\\BloomNative.Windows.Controls", out bool first);
             if (!first)
             {
-                MessageBox.Show("Bloom Native is already running. Open its controls from the system tray.", "Bloom Native");
+                MessageBox.Show("You opened Bloom Native Windows 0.1.4, but another Bloom instance is already running. Quit that instance from its controls or tray menu, then open this file again.", "Bloom Native · Windows 0.1.4");
                 return 0;
             }
             var controls = new MainWindow();
