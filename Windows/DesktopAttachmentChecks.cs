@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
@@ -35,10 +36,10 @@ internal static class DesktopAttachmentChecks
             if (!condition) throw new InvalidOperationException("Desktop attachment fixture: " + message);
             assertions++;
         }
-        void CheckPixel(nint fixture, int x, int y, uint expected, string message)
+        void CheckPixel(nint fixture, int x, int y, uint expected, string message, string context = "")
         {
             bool visible = WaitForPixel(fixture, x, y, expected, out uint actual, out string diagnostics);
-            Check(visible, $"{message}; expected RGB {DescribeColor(expected)}, observed {DescribeColor(actual)}; {diagnostics}");
+            Check(visible, $"{message}; expected RGB {DescribeColor(expected)}, observed {DescribeColor(actual)}; {diagnostics}; {context}");
         }
 
         nint previousDpi = Native.SetThreadDpiAwarenessContext(-4);
@@ -143,6 +144,8 @@ internal static class DesktopAttachmentChecks
             nint classicBacking = CreateFixtureWindow(root, 0, 0, 240, 180);
             ShowFixture(root);
             Check(Native.GetWindowRect(root, out rootRect), "the classic fixture rectangle is available");
+            CheckPixel(root, rootRect.Left + 120, rootRect.Top + 90, 0x000000, "the classic fixture is visible before WPF attachment");
+            string classicBefore = DescribeWindow(root);
             target = new Rectangle(rootRect.Left + 8, rootRect.Top + 8, 224, 164);
             var classic = new DesktopHost.ShellLayer(root, root, 0, 0, (uint)Environment.ProcessId, false);
             host = DesktopHost.CreateNativeHost(target, classic);
@@ -154,12 +157,19 @@ internal static class DesktopAttachmentChecks
             surface.Show();
             DesktopHost.PositionWindow(handle, target, classic);
             surface.UpdateLayout();
+            string classicAfterWpf = DescribeWindow(root);
+            // WPF's Show/placement can change top-level ordering. Keep this owned
+            // diagnostic fixture isolated above unrelated application windows;
+            // production desktop placement is not changed by this test setup.
+            ShowFixture(root);
+            string classicAfterIsolation = DescribeWindow(root);
             Check(Native.GetParent(handle) == root && DesktopHost.IsContentHealthy(handle, classic) &&
                 HwndSource.FromHwnd(handle)?.CompositionTarget?.UsesPerPixelOpacity == false,
                 "classic WPF content stays opaque and directly parented");
             Check(Native.GetWindow(root, 5) == handle && Native.GetWindow(handle, 2) == classicBacking,
                 "classic WPF content stays above its owned hit-testable backing");
-            CheckPixel(root, rootRect.Left + 120, rootRect.Top + 90, 0x00FF00, "classic attachment visibly presents lime WPF content");
+            CheckPixel(root, rootRect.Left + 120, rootRect.Top + 90, 0x00FF00, "classic attachment visibly presents lime WPF content",
+                $"classic before WPF=[{classicBefore}]; after WPF=[{classicAfterWpf}]; after fixture isolation=[{classicAfterIsolation}]");
             surface.Close();
             surface = null;
             CheckPixel(root, rootRect.Left + 120, rootRect.Top + 90, 0x000000, "classic cleanup reveals the underlying fixture background");
@@ -246,9 +256,17 @@ internal static class DesktopAttachmentChecks
         {
             DrainDispatcher();
             if (Native.DwmFlush() < 0) throw new InvalidOperationException("DWM presentation is unavailable for the owned pixel fixture.");
-            nint hit = Native.WindowFromPoint(new Native.Point(x, y));
-            // Sample only a point covered by our own test-window tree.
-            if (hit == root || Native.IsChild(root, hit))
+            nint desktop = Native.GetDesktopWindow();
+            var point = new Native.Point(x, y);
+            int mapped = Native.MapWindowPoints(0, desktop, ref point, 1);
+            if (mapped == 0 && Marshal.GetLastWin32Error() != 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not map the owned sample point to the desktop.");
+            // Validate top-level coverage, not pointer hit testing. WindowFromPoint
+            // skips input-transparent subtrees even while their pixels are visible.
+            // Include transparent/disabled top-level windows; skip only invisible
+            // ones. No foreign covering window is accepted for a pixel sample.
+            nint covering = Native.ChildWindowFromPointEx(desktop, point, 0x0001);
+            if (covering == root)
             {
                 nint dc = Native.GetDC(0);
                 if (dc != 0)
@@ -265,7 +283,7 @@ internal static class DesktopAttachmentChecks
                 }
                 else diagnostics = $"GetDC(screen) returned null; Win32 error={Marshal.GetLastWin32Error()}";
             }
-            else diagnostics = $"Ownership guard rejected hit HWND=0x{hit:X}; root HWND=0x{root:X}; IsChild=false";
+            else diagnostics = $"Coverage guard rejected covering=[{DescribeWindow(covering)}]; pointer hit=[{DescribeWindow(Native.WindowFromPoint(new Native.Point(x, y)))}]; owned root HWND=0x{root:X}";
             var frame = new DispatcherFrame();
             var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(40) };
             timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
@@ -275,8 +293,17 @@ internal static class DesktopAttachmentChecks
         } while (timeout.ElapsedMilliseconds < 2000);
         Native.GetWindowRect(root, out Native.Rect bounds);
         int cloakResult = Native.DwmGetWindowAttribute(root, 14, out uint cloaked, sizeof(uint));
-        diagnostics += $"; root visible={Native.IsWindowVisible(root)}, cloaked={(cloakResult >= 0 ? cloaked.ToString() : "unavailable")}, bounds=({bounds.Left},{bounds.Top},{bounds.Right},{bounds.Bottom}), sample=({x},{y}), user interactive={Environment.UserInteractive}, process session={Process.GetCurrentProcess().SessionId}";
+        diagnostics += $"; root=[{DescribeWindow(root)}], visible={Native.IsWindowVisible(root)}, cloaked={(cloakResult >= 0 ? cloaked.ToString() : "unavailable")}, bounds=({bounds.Left},{bounds.Top},{bounds.Right},{bounds.Bottom}), sample=({x},{y}), top window=0x{Native.GetTopWindow(0):X}, user interactive={Environment.UserInteractive}, process session={Process.GetCurrentProcess().SessionId}";
         return false;
+    }
+
+    private static string DescribeWindow(nint handle)
+    {
+        if (handle == 0) return "null";
+        var name = new StringBuilder(128);
+        Native.GetClassName(handle, name, name.Capacity);
+        Native.GetWindowThreadProcessId(handle, out uint process);
+        return $"HWND=0x{handle:X}, class={name}, PID={process}, parent=0x{Native.GetParent(handle):X}, ancestor=0x{Native.GetAncestor(handle, 2):X}, exstyle=0x{Native.GetStyle(handle, -20):X}, above=0x{Native.GetWindow(handle, 3):X}, below=0x{Native.GetWindow(handle, 2):X}";
     }
 
     private static bool ColorMatches(uint actual, uint expected) => actual != uint.MaxValue &&
@@ -309,9 +336,9 @@ internal static class DesktopAttachmentChecks
             [MarshalAs(UnmanagedType.LPWStr)] internal string Name;
         }
         [StructLayout(LayoutKind.Sequential)] internal struct Rect { internal int Left, Top, Right, Bottom; }
-        [StructLayout(LayoutKind.Sequential)] internal readonly struct Point
+        [StructLayout(LayoutKind.Sequential)] internal struct Point
         {
-            internal readonly int X, Y;
+            internal int X, Y;
             internal Point(int x, int y) { X = x; Y = y; }
         }
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -327,6 +354,10 @@ internal static class DesktopAttachmentChecks
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool IsChild(nint parent, nint child);
         [DllImport("user32.dll")] internal static extern nint GetParent(nint handle);
         [DllImport("user32.dll")] internal static extern nint GetWindow(nint handle, uint command);
+        [DllImport("user32.dll")] internal static extern nint GetTopWindow(nint handle);
+        [DllImport("user32.dll")] internal static extern nint GetAncestor(nint handle, uint flags);
+        [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(nint handle, out uint process);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetClassName(nint handle, StringBuilder name, int capacity);
         [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool GetWindowRect(nint handle, out Rect rect);
         [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool SetWindowPos(nint handle, nint after, int x, int y, int width, int height, uint flags);
@@ -335,6 +366,9 @@ internal static class DesktopAttachmentChecks
         [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool RedrawWindow(nint handle, nint rect, nint region, uint flags);
         [DllImport("user32.dll", SetLastError = true)] internal static extern nint SetThreadDpiAwarenessContext(nint context);
         [DllImport("user32.dll")] internal static extern nint WindowFromPoint(Point point);
+        [DllImport("user32.dll")] internal static extern nint GetDesktopWindow();
+        [DllImport("user32.dll")] internal static extern nint ChildWindowFromPointEx(nint parent, Point point, uint flags);
+        [DllImport("user32.dll", SetLastError = true)] internal static extern int MapWindowPoints(nint from, nint to, ref Point point, uint count);
         [DllImport("user32.dll", SetLastError = true)] internal static extern nint GetDC(nint handle);
         [DllImport("user32.dll")] internal static extern int ReleaseDC(nint handle, nint dc);
         [DllImport("gdi32.dll", SetLastError = true)] internal static extern uint GetPixel(nint dc, int x, int y);
