@@ -136,6 +136,11 @@ internal static class DesktopAttachmentChecks
             // Classic attachment has a normal redirected native parent and an
             // ordinary WPF child, without an additional layered native host.
             root = CreateFixtureWindow(0, workArea.Left + 16, workArea.Top + 16, 240, 180);
+            // Production WPF content intentionally passes hit testing through.
+            // Give that pass-through an owned black backing child, as in the
+            // raised fixture, so the pixel ownership guard never needs to accept
+            // an unrelated window underneath the fixture.
+            nint classicBacking = CreateFixtureWindow(root, 0, 0, 240, 180);
             ShowFixture(root);
             Check(Native.GetWindowRect(root, out rootRect), "the classic fixture rectangle is available");
             target = new Rectangle(rootRect.Left + 8, rootRect.Top + 8, 224, 164);
@@ -152,6 +157,8 @@ internal static class DesktopAttachmentChecks
             Check(Native.GetParent(handle) == root && DesktopHost.IsContentHealthy(handle, classic) &&
                 HwndSource.FromHwnd(handle)?.CompositionTarget?.UsesPerPixelOpacity == false,
                 "classic WPF content stays opaque and directly parented");
+            Check(Native.GetWindow(root, 5) == handle && Native.GetWindow(handle, 2) == classicBacking,
+                "classic WPF content stays above its owned hit-testable backing");
             CheckPixel(root, rootRect.Left + 120, rootRect.Top + 90, 0x00FF00, "classic attachment visibly presents lime WPF content");
             surface.Close();
             surface = null;
