@@ -18,6 +18,10 @@ namespace BloomNative.Windows;
 /// </summary>
 internal static class DesktopAttachmentChecks
 {
+    private const string BlackFixtureClass = "BloomBlackCompositionFixture";
+    private const string WhiteFixtureClass = "BloomWhiteCompositionFixture";
+    private static readonly Native.WindowProcedure FixtureProcedure = FixtureWindowMessage;
+    private static bool fixtureClassesRegistered;
     internal sealed record Result(bool Passed, int Assertions, string Scope, bool CompositionVerified);
 
     internal static Result Run()
@@ -33,8 +37,8 @@ internal static class DesktopAttachmentChecks
         }
         void CheckPixel(nint fixture, int x, int y, uint expected, string message)
         {
-            bool visible = WaitForPixel(fixture, x, y, expected, out uint actual);
-            Check(visible, $"{message}; expected RGB {DescribeColor(expected)}, observed {DescribeColor(actual)}");
+            bool visible = WaitForPixel(fixture, x, y, expected, out uint actual, out string diagnostics);
+            Check(visible, $"{message}; expected RGB {DescribeColor(expected)}, observed {DescribeColor(actual)}; {diagnostics}");
         }
 
         nint previousDpi = Native.SetThreadDpiAwarenessContext(-4);
@@ -178,9 +182,11 @@ internal static class DesktopAttachmentChecks
     private static nint CreateFixtureWindow(nint parent, int x, int y, int width, int height,
         bool noRedirection = false, bool layered = false, bool white = false)
     {
-        uint style = (parent == 0 ? 0x80000000u : 0x40000000u) | 0x10000000u | 0x02000000u | 0x04000000u | (white ? 6u : 4u);
+        EnsureFixtureClasses();
+        uint style = (parent == 0 ? 0x80000000u : 0x40000000u) | 0x10000000u | 0x02000000u | 0x04000000u;
         uint extended = 0x00000080 | 0x08000000 | (noRedirection ? 0x00200000u : 0) | (layered ? 0x00080000u : 0);
-        nint handle = Native.CreateWindowEx(extended, "STATIC", string.Empty, style, x, y, width, height, parent, 0, 0, 0);
+        nint handle = Native.CreateWindowEx(extended, white ? WhiteFixtureClass : BlackFixtureClass, string.Empty,
+            style, x, y, width, height, parent, 0, Native.GetModuleHandle(null), 0);
         if (handle == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not create the owned desktop fixture.");
         if (layered && !Native.SetLayeredWindowAttributes(handle, 0, 255, 2))
         {
@@ -190,15 +196,44 @@ internal static class DesktopAttachmentChecks
         return handle;
     }
 
+    private static void EnsureFixtureClasses()
+    {
+        if (fixtureClassesRegistered) return;
+        // WindowFromPoint intentionally skips STATIC text controls. Use owned
+        // window classes with explicit HTCLIENT so the ownership guard can verify
+        // a sample point without falling through to somebody else's window.
+        foreach (var item in new[] { (BlackFixtureClass, 4), (WhiteFixtureClass, 0) })
+        {
+            var definition = new Native.WindowClass
+            {
+                Procedure = Marshal.GetFunctionPointerForDelegate(FixtureProcedure),
+                Instance = Native.GetModuleHandle(null),
+                Background = Native.GetStockObject(item.Item2),
+                Name = item.Item1
+            };
+            if (Native.RegisterClass(ref definition) == 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not register the owned fixture class.");
+        }
+        fixtureClassesRegistered = true;
+    }
+
+    private static nint FixtureWindowMessage(nint handle, uint message, nint wParam, nint lParam)
+    {
+        if (message == 0x0084) return 1; // WM_NCHITTEST: HTCLIENT for owned-pixel checks.
+        if (message == 0x0021) return 3; // WM_MOUSEACTIVATE: MA_NOACTIVATE.
+        return Native.DefWindowProc(handle, message, wParam, lParam);
+    }
+
     private static void ShowFixture(nint root)
     {
         Require(Native.SetWindowPos(root, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040), "Could not show the owned composition fixture.");
         Require(Native.RedrawWindow(root, 0, 0, 0x0001 | 0x0004 | 0x0080 | 0x0100), "Could not paint the owned fixture.");
     }
 
-    private static bool WaitForPixel(nint root, int x, int y, uint expected, out uint actual)
+    private static bool WaitForPixel(nint root, int x, int y, uint expected, out uint actual, out string diagnostics)
     {
         actual = uint.MaxValue;
+        diagnostics = "Pixel read not attempted.";
         var timeout = Stopwatch.StartNew();
         do
         {
@@ -211,11 +246,19 @@ internal static class DesktopAttachmentChecks
                 nint dc = Native.GetDC(0);
                 if (dc != 0)
                 {
-                    try { actual = Native.GetPixel(dc, x, y); }
+                    try
+                    {
+                        actual = Native.GetPixel(dc, x, y);
+                        diagnostics = actual == uint.MaxValue
+                            ? $"GetPixel returned CLR_INVALID; Win32 error={Marshal.GetLastWin32Error()}"
+                            : "Owned screen pixel was read but has not reached the expected color";
+                    }
                     finally { Native.ReleaseDC(0, dc); }
                     if (ColorMatches(actual, expected)) return true;
                 }
+                else diagnostics = $"GetDC(screen) returned null; Win32 error={Marshal.GetLastWin32Error()}";
             }
+            else diagnostics = $"Ownership guard rejected hit HWND=0x{hit:X}; root HWND=0x{root:X}; IsChild=false";
             var frame = new DispatcherFrame();
             var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(40) };
             timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
@@ -223,6 +266,9 @@ internal static class DesktopAttachmentChecks
             try { Dispatcher.PushFrame(frame); }
             finally { timer.Stop(); }
         } while (timeout.ElapsedMilliseconds < 2000);
+        Native.GetWindowRect(root, out Native.Rect bounds);
+        int cloakResult = Native.DwmGetWindowAttribute(root, 14, out uint cloaked, sizeof(uint));
+        diagnostics += $"; root visible={Native.IsWindowVisible(root)}, cloaked={(cloakResult >= 0 ? cloaked.ToString() : "unavailable")}, bounds=({bounds.Left},{bounds.Top},{bounds.Right},{bounds.Bottom}), sample=({x},{y}), user interactive={Environment.UserInteractive}, process session={Process.GetCurrentProcess().SessionId}";
         return false;
     }
 
@@ -244,6 +290,17 @@ internal static class DesktopAttachmentChecks
 
     private static class Native
     {
+        internal delegate nint WindowProcedure(nint handle, uint message, nint wParam, nint lParam);
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        internal struct WindowClass
+        {
+            internal uint Style;
+            internal nint Procedure;
+            internal int ClassExtra, WindowExtra;
+            internal nint Instance, Icon, Cursor, Background;
+            [MarshalAs(UnmanagedType.LPWStr)] internal string? MenuName;
+            [MarshalAs(UnmanagedType.LPWStr)] internal string Name;
+        }
         [StructLayout(LayoutKind.Sequential)] internal struct Rect { internal int Left, Top, Right, Bottom; }
         [StructLayout(LayoutKind.Sequential)] internal readonly struct Point
         {
@@ -253,8 +310,13 @@ internal static class DesktopAttachmentChecks
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         internal static extern nint CreateWindowEx(uint extendedStyle, string className, string title, uint style,
             int x, int y, int width, int height, nint parent, nint menu, nint instance, nint parameter);
+        [DllImport("user32.dll", EntryPoint = "RegisterClassW", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern ushort RegisterClass(ref WindowClass definition);
+        [DllImport("user32.dll", EntryPoint = "DefWindowProcW")] internal static extern nint DefWindowProc(nint handle, uint message, nint wParam, nint lParam);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] internal static extern nint GetModuleHandle(string? name);
+        [DllImport("gdi32.dll")] internal static extern nint GetStockObject(int index);
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool DestroyWindow(nint handle);
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool IsWindow(nint handle);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool IsWindowVisible(nint handle);
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool IsChild(nint parent, nint child);
         [DllImport("user32.dll")] internal static extern nint GetParent(nint handle);
         [DllImport("user32.dll")] internal static extern nint GetWindow(nint handle, uint command);
@@ -266,11 +328,12 @@ internal static class DesktopAttachmentChecks
         [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool RedrawWindow(nint handle, nint rect, nint region, uint flags);
         [DllImport("user32.dll", SetLastError = true)] internal static extern nint SetThreadDpiAwarenessContext(nint context);
         [DllImport("user32.dll")] internal static extern nint WindowFromPoint(Point point);
-        [DllImport("user32.dll")] internal static extern nint GetDC(nint handle);
+        [DllImport("user32.dll", SetLastError = true)] internal static extern nint GetDC(nint handle);
         [DllImport("user32.dll")] internal static extern int ReleaseDC(nint handle, nint dc);
-        [DllImport("gdi32.dll")] internal static extern uint GetPixel(nint dc, int x, int y);
+        [DllImport("gdi32.dll", SetLastError = true)] internal static extern uint GetPixel(nint dc, int x, int y);
         [DllImport("dwmapi.dll")] internal static extern int DwmIsCompositionEnabled([MarshalAs(UnmanagedType.Bool)] out bool enabled);
         [DllImport("dwmapi.dll")] internal static extern int DwmFlush();
+        [DllImport("dwmapi.dll")] internal static extern int DwmGetWindowAttribute(nint handle, uint attribute, out uint value, uint size);
         [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern nint GetWindowLongPtr(nint handle, int index);
         [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] private static extern int GetWindowLong(nint handle, int index);
         internal static long GetStyle(nint handle, int index) => IntPtr.Size == 8
