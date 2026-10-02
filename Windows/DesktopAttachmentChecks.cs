@@ -201,10 +201,17 @@ internal static class DesktopAttachmentChecks
     {
         EnsureFixtureClasses();
         uint style = (parent == 0 ? 0x80000000u : 0x40000000u) | 0x10000000u | 0x02000000u | 0x04000000u;
-        uint extended = 0x00000080 | 0x08000000 | (noRedirection ? 0x00200000u : 0) | (layered ? 0x00080000u : 0);
+        uint extended = 0x00000080 | 0x08000000 | (parent == 0 ? 0x00000008u : 0) |
+            (noRedirection ? 0x00200000u : 0) | (layered ? 0x00080000u : 0);
         nint handle = Native.CreateWindowEx(extended, white ? WhiteFixtureClass : BlackFixtureClass, string.Empty,
             style, x, y, width, height, parent, 0, Native.GetModuleHandle(null), 0);
         if (handle == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not create the owned desktop fixture.");
+        if (parent == 0 && (Native.GetStyle(handle, -20) & 0x00000008) == 0)
+        {
+            string state = DescribeWindow(handle);
+            Native.DestroyWindow(handle);
+            throw new InvalidOperationException("The owned fixture did not retain WS_EX_TOPMOST at creation: " + state);
+        }
         if (layered && !Native.SetLayeredWindowAttributes(handle, 0, 255, 2))
         {
             Native.DestroyWindow(handle);
@@ -243,19 +250,39 @@ internal static class DesktopAttachmentChecks
 
     private static void ShowFixture(nint root)
     {
+        string before = DescribeWindow(root);
         Require(Native.SetWindowPos(root, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040), "Could not show the owned composition fixture.");
+        RestoreTopmost(root, "after ShowFixture; before=[" + before + "]");
         Require(Native.RedrawWindow(root, 0, 0, 0x0001 | 0x0004 | 0x0080 | 0x0100), "Could not paint the owned fixture.");
+        RestoreTopmost(root, "after fixture redraw");
+    }
+
+    private static void RestoreTopmost(nint root, string phase)
+    {
+        if ((Native.GetStyle(root, -20) & 0x00000008) != 0) return;
+        string before = DescribeWindow(root);
+        Require(Native.SetWindowPos(root, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040),
+            "Could not restore the owned fixture's topmost isolation.");
+        if ((Native.GetStyle(root, -20) & 0x00000008) == 0)
+            throw new InvalidOperationException($"Owned fixture lost WS_EX_TOPMOST {phase}; before=[{before}]; after=[{DescribeWindow(root)}]");
     }
 
     private static bool WaitForPixel(nint root, int x, int y, uint expected, out uint actual, out string diagnostics)
     {
         actual = uint.MaxValue;
         diagnostics = "Pixel read not attempted.";
+        string ordering = string.Empty;
         var timeout = Stopwatch.StartNew();
         do
         {
+            long beforeDrain = Native.GetStyle(root, -20);
             DrainDispatcher();
+            long afterDrain = Native.GetStyle(root, -20);
+            RestoreTopmost(root, "after dispatcher drain");
             if (Native.DwmFlush() < 0) throw new InvalidOperationException("DWM presentation is unavailable for the owned pixel fixture.");
+            long afterDwm = Native.GetStyle(root, -20);
+            RestoreTopmost(root, "after DWM flush");
+            ordering = $"root exstyle before dispatcher=0x{beforeDrain:X}, after dispatcher=0x{afterDrain:X}, after DWM=0x{afterDwm:X}, before sample=0x{Native.GetStyle(root, -20):X}";
             nint desktop = Native.GetDesktopWindow();
             var point = new Native.Point(x, y);
             int mapped = Native.MapWindowPoints(0, desktop, ref point, 1);
@@ -293,7 +320,7 @@ internal static class DesktopAttachmentChecks
         } while (timeout.ElapsedMilliseconds < 2000);
         Native.GetWindowRect(root, out Native.Rect bounds);
         int cloakResult = Native.DwmGetWindowAttribute(root, 14, out uint cloaked, sizeof(uint));
-        diagnostics += $"; root=[{DescribeWindow(root)}], visible={Native.IsWindowVisible(root)}, cloaked={(cloakResult >= 0 ? cloaked.ToString() : "unavailable")}, bounds=({bounds.Left},{bounds.Top},{bounds.Right},{bounds.Bottom}), sample=({x},{y}), top window=0x{Native.GetTopWindow(0):X}, user interactive={Environment.UserInteractive}, process session={Process.GetCurrentProcess().SessionId}";
+        diagnostics += $"; {ordering}; root=[{DescribeWindow(root)}], visible={Native.IsWindowVisible(root)}, cloaked={(cloakResult >= 0 ? cloaked.ToString() : "unavailable")}, bounds=({bounds.Left},{bounds.Top},{bounds.Right},{bounds.Bottom}), sample=({x},{y}), top window=0x{Native.GetTopWindow(0):X}, user interactive={Environment.UserInteractive}, process session={Process.GetCurrentProcess().SessionId}";
         return false;
     }
 
