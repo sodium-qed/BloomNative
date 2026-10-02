@@ -4,10 +4,11 @@ A Windows port of Bloom Native using WPF and the Windows media stack. The Window
 
 ## Requirements
 
-- Windows 10 or Windows 11, x64 or ARM64, with a working Windows media stack. Windows N editions may require Microsoft's Media Feature Pack.
+- Windows 10 **version 2004 (build 19041) or later**, or Windows 11, on x64 or ARM64, with a working Windows media stack. Windows N editions may require Microsoft's Media Feature Pack.
 - For building: the **.NET 8 SDK** or newer, including Windows desktop targeting support.
 - Published bundles contain the .NET runtime. Users do not need to install the SDK or runtime to run a bundle.
 - Internet access is needed only when you choose to download the original animation in the app. Builds and automated checks do not download it.
+- The optional webcam experiment needs a working camera and Windows camera permission. It uses Windows' native camera APIs; no third-party native camera DLL is bundled.
 
 ## Build and run
 
@@ -40,9 +41,26 @@ dotnet run --project Windows/BloomNative.Windows.csproj
 2. Enable the desktop wallpaper. The app places a separate animated surface behind the icons on each monitor.
 3. Set the unfolding position with the manual slider, or replay the unfolding animation. Wake replay and gentle breathing can be controlled in settings.
 4. Choose English or 简体中文 in the language setting. Settings are remembered between launches.
-5. Closing the controls hides them while the wallpaper keeps running. Use the notification-area icon to reopen the controls or exit the app.
+5. Closing the main controls hides them while the wallpaper keeps running. Use the notification-area icon to reopen the controls or exit the app. The optional camera window is separate; closing the main controls does not stop an active camera.
 
-The Windows version does not read a continuous laptop hinge angle. Its manual position control and wake replay replace the Mac-specific HID sensor path. It does not overwrite your system wallpaper or create lock-screen snapshots. Exiting removes its desktop surfaces and exposes your existing wallpaper.
+The Windows version does not read a continuous laptop hinge angle. Manual position control and wake replay work without a camera. The optional webcam experiment below maps visual motion to the animation; it does not measure hinge degrees. The app does not overwrite your system wallpaper or create lock-screen snapshots. Exiting removes its desktop surfaces and exposes your existing wallpaper.
+
+## Experimental webcam control (0.1.3)
+
+This experiment uses a selected background feature in the webcam image to estimate lid movement. Keep the laptop base fixed, move the lid slowly, and use a stationary, well-lit, textured target that stays visible and recognizable through a modest lid movement. A built-in camera must move with the lid for this to respond to lid movement; an external camera sitting on the desk will not do that. Moving the laptop, target, or camera independently can change the estimate. A person, changing screen image, blank wall, or reflective surface makes a poor target. Large or fast movements can lose the target.
+
+The two calibration positions represent **0% and 100% of the Bloom animation**, not physical hinge angles. Choose two comfortable positions with the camera unobstructed; you do not need to close the laptop to capture the folded endpoint. The result is an experimental relative control, with no claim of angle accuracy. Physical-camera and laptop-hinge behavior has not yet been verified on hardware.
+
+1. Choose **Webcam tracking (experimental)…**, select a camera, and press **Start camera**. Allow camera access in Windows if prompted; desktop-app camera access must also be enabled in Windows camera privacy settings. The camera never starts automatically. Use **Refresh cameras** after connecting a device if it is not listed.
+2. Hold the lid at your chosen folded animation endpoint. In the live preview, drag a rectangle around a small stationary, textured feature.
+3. Press **Capture folded (0%)**, then slowly move only the lid toward your chosen unfolded endpoint while keeping that feature visible.
+4. Press **Capture unfolded (100%)**. Successful calibration starts tracking and maps the selected visual motion to Bloom's unfolding position. Calibrated tracking takes over the unfolding control: the manual slider and replay are disabled, and breathing pauses so a held position stays still.
+5. If the target is lost or confidence becomes too low, the unfolding position holds. There is no automatic target reacquisition. Select the target again and capture both endpoints to resume tracking. Recalibrate after moving the laptop base, changing the target, or changing the camera setup.
+6. Press **Stop camera**, or close the camera window, to release the camera before returning to manual unfolding or replay. **Reset calibration** lets you choose new endpoints while the camera remains running.
+
+The preview is unmirrored. The camera may remain active while its window is minimized or the main controls are hidden; its camera window title and status indicate that it is on. Close the camera window or choose its stop control when you are done. Locking the session, sleep, display-off, lid-close notifications, and quitting the app also stop capture. These stops clear calibration, and unlocking or waking does **not** restart the camera. Start it and calibrate again explicitly. Hardware and Windows determine which lid and power notifications are available.
+
+Camera processing is local and video-only: this feature does not use the microphone, save photos or recordings, or send camera frames over the network. Preview frames, the selected target, and calibration remain in memory and are cleared when the camera stops. Camera selection and calibration are not persisted between sessions. The app's separate, user-requested artwork download still uses the network.
 
 ## If the artwork download returns HTTP 403
 
@@ -52,11 +70,11 @@ Browser access is not guaranteed. If the source also refuses your browser, you c
 
 ## If the preview works but the desktop still shows the old wallpaper
 
-Version **0.1.2** changes desktop-layer placement for Explorer layouts where Bloom could be attached successfully but remain covered by Windows' existing wallpaper. This change still needs visual confirmation on affected Windows devices. The download handling and browser/local-copy fallback from 0.1.1 are also included.
+Versions **0.1.2 and later** change desktop-layer placement for Explorer layouts where Bloom could be attached successfully but remain covered by Windows' existing wallpaper. This change still needs visual confirmation on affected Windows devices. Version **0.1.3** also includes experimental webcam control; the download handling and browser/local-copy fallback from 0.1.1 remain included.
 
 To check the new build:
 
-1. **Quit** the old build from its notification-area menu. Extract the new bundle into a separate folder, start `BloomNative.Windows.exe`, and confirm the title shows **Windows 0.1.2**. Previously downloaded artwork is reused.
+1. **Quit** the old build from its notification-area menu. Extract the new bundle into a separate folder, start `BloomNative.Windows.exe`, and confirm the title shows **Windows 0.1.3**. Previously downloaded artwork is reused.
 2. Enable **Dynamic desktop wallpaper** and choose **Replay unfolding**. Minimize the controls or press **Win+D** to view the desktop. Check that Bloom is visible on every monitor and that the replay changes the desktop image, as well as the preview.
 3. Click a desktop icon and open an ordinary application window. Icons should remain usable and application windows should appear above Bloom. Disable the wallpaper and confirm that your original Windows wallpaper becomes visible again.
 4. If Bloom is still hidden, return to the controls and choose **Copy diagnostics**. Include that report with your Windows version, monitor count, display scaling, and whether the preview was working. The report summarizes the desktop window hierarchy and monitor geometry to help identify the layer being used.
@@ -83,6 +101,7 @@ Windows controls password protection and sign-in policy. The app does not implem
 - Rendering and seeking use Windows video decoding, rather than the Mac app's predecoded Metal textures. Exact frame timing and smoothness depend on the decoder and graphics hardware.
 - Desktop animation pauses around sleep/lock transitions. Screen-saver behavior, wake replay, monitor changes, and Explorer recovery require interactive testing on actual Windows machines.
 - WPF and Windows media playback are required. A build or command-line self-test is not evidence that wallpaper attachment or video playback works on every Windows configuration.
+- Webcam control is experimental image tracking, not a replacement for a hardware hinge sensor. Camera permissions, camera sharing, lighting, motion, occlusion, and Windows power notifications require physical-device testing. Manual controls remain available without camera access.
 
 ## Verification
 
@@ -101,7 +120,7 @@ if ($process.ExitCode -ne 0) { throw 'Application self-test failed.' }
 Get-Content -LiteralPath $resultPath
 ```
 
-This initial port was developed in a Linux environment, where its Windows GUI cannot run. CI is configured to run the core checks, publish both architectures, and execute an x64 WPF self-test without fetching artwork. The self-test includes an owned HWND fixture that exercises the production window-creation and attachment methods: layered rendering configuration after WPF initialization, parent and stacking order, position, detection of a covered surface, and cleanup. It does not attach to the real Explorer desktop or verify video playback. ARM64 is built but is not executed on the x64 CI runner. Interactive desktop and screen-saver validation is separate from these checks; run the following matrix on Windows before treating a configuration as verified:
+This initial port was developed in a Linux environment, where its Windows GUI cannot run. CI is configured to run the core checks, publish both architectures, and execute an x64 WPF self-test without fetching artwork. The self-test includes an owned HWND fixture that exercises the production window-creation and attachment methods: layered rendering configuration after WPF initialization, parent and stacking order, position, detection of a covered surface, and cleanup. It also checks that the required Windows camera APIs are available in the packaged runtime without opening a camera. It does not attach to the real Explorer desktop or verify video playback or camera capture. ARM64 is built but is not executed on the x64 CI runner. Interactive desktop, screen-saver, and camera validation are separate from these checks; run the following matrix on Windows before treating a configuration as verified:
 
 | Manual check | Expected result |
 | --- | --- |
@@ -122,6 +141,25 @@ This initial port was developed in a Linux environment, where its Windows GUI ca
 | Full-screen screen saver and keyboard/mouse input | Screen saver exits; Windows retains sign-in protection. |
 | Windows x64 and native Windows ARM64 | Correct architecture bundle starts and plays the animation. |
 
+The webcam experiment additionally needs the following device checks. Passing synthetic motion checks or compiling the capture code does not establish camera compatibility or hinge-tracking accuracy.
+
+| Webcam device check | Expected result |
+| --- | --- |
+| Fresh launch, open camera window, and select a device | Camera remains off until explicitly started. |
+| Camera permission denied; camera already in use; no camera present | Clear status or error; no crash or unexpected capture; manual wallpaper controls remain usable. |
+| Start the selected camera | The selected device supplies an unmirrored preview and the camera window indicates active capture. |
+| Fixed laptop base, stationary textured target, two modest lid positions | Accepted endpoints map to folded/unfolded animation positions without claiming physical degrees. |
+| Successful calibration, then target loss | Manual unfolding and replay remain disabled while tracking has control; breathing stays paused and the last accepted position holds. Stop the camera to return to manual control. |
+| Blank target or endpoints too similar to calibrate | Calibration is rejected with guidance instead of starting unreliable control. |
+| Cover the lens, move the target out of view, or change lighting sharply | Low-confidence or lost tracking holds the current animation position; reselecting and recalibrating is required after loss. |
+| Minimize the camera window; hide the main controls | Capture may continue, and the camera window's active title remains identifiable on the taskbar. |
+| Reset calibration | Camera preview continues; unfolding control awaits a new calibration. |
+| Stop camera or close its window, then reopen it | Camera is released, prior frames/calibration are cleared, and capture does not restart automatically. |
+| Lock/unlock, sleep/resume, display off/on, supported lid close/open | Capture stops and remains off after return; explicitly starting it again requires new calibration. |
+| Disconnect a USB camera while running | Capture ends or reports failure and releases resources; no automatic restart. |
+| Quit the app during capture or camera startup | Capture stops and the process exits without leaving the camera active. |
+| Select a different camera after stopping | Only the newly selected device starts; previous calibration is not reused. |
+
 ## Artwork and source licenses
 
 The application source is MIT-licensed; see `LICENSE`. The original Bloom animation belongs to **Microsoft / Six N. Five** and is excluded from that license. No permission to redistribute it is asserted. The app downloads the animation to the user's machine only when requested, using the source URL and SHA-256 in `BloomOriginal.source.json`.
@@ -132,12 +170,16 @@ The application source is MIT-licensed; see `LICENSE`. The original Bloom animat
 
 ## 简体中文
 
-Windows 版本使用 WPF，支持手动控制展开位置、唤醒时重新播放、轻微呼吸动画、托盘控制及屏幕保护程序。不读取连续的笔记本屏幕开合角度，也不覆盖系统壁纸或锁屏图片。
+Windows 版本使用 WPF，要求 Windows 10 2004（19041）及以上或 Windows 11，支持手动控制展开位置、唤醒时重新播放、轻微呼吸动画、托盘控制及屏幕保护程序。不读取连续的笔记本屏幕开合角度，也不覆盖系统壁纸或锁屏图片。
+
+0.1.3 新增实验性摄像头控制：明确启动选中的摄像头后，在预览中框选静止、有纹理的背景目标，保持笔记本底座不动，在适度的屏幕开合范围内分别记录动画的折叠和展开端点。它估计图像运动，不测量铰链角度，尚未通过真实摄像头和笔记本硬件验证。目标丢失时展开位置保持不变，需要重新选择目标并校准。
+
+摄像头窗口最小化或主控制窗口隐藏后，拍摄可能继续，摄像头窗口标题和状态会显示正在运行。停止摄像头、关闭其窗口、锁定、休眠、关闭显示器、收到合盖通知或退出程序都会停止拍摄；恢复后不会自动重启，需要手动启动并重新校准。摄像头只在本机处理视频，不使用麦克风，不保存照片或录像，不上传画面；帧、目标和校准仅存在内存中，停止时清除。下载动画素材是独立的联网操作。
 
 在 Windows PowerShell 中运行 `./Windows/build.ps1`，然后启动 `dist/windows/win-x64/BloomNative.Windows.exe`。Windows ARM64 可使用 `./Windows/build.ps1 -Runtime win-arm64`。首次使用时，请在应用中点击下载原动画；构建和发布包均不包含该素材。界面可切换 **English / 简体中文**。
 
 若下载返回 HTTP 403，可选择在浏览器中打开原动画；如果浏览器可以访问，请保存原视频，再通过“选择本地副本…”导入。导入仍会校验同一 SHA-256。浏览器也可能被拒绝；此时只能使用已有的匹配原视频副本，应用无法保证源文件可访问。
 
-若预览正常但桌面仍显示旧壁纸，请先从托盘退出旧版本，再启动标题显示 **Windows 0.1.2** 的新版本。启用动态壁纸并重新播放，最小化控制窗口或按 **Win+D**，确认桌面上的 Bloom 确实可见、图标仍可点击。此改动仍需在受影响的 Windows 设备上确认；若依然不可见，请复制诊断信息，并提供显示器数量和缩放设置。
+若预览正常但桌面仍显示旧壁纸，请先从托盘退出旧版本，再启动标题显示 **Windows 0.1.3** 的新版本。启用动态壁纸并重新播放，最小化控制窗口或按 **Win+D**，确认桌面上的 Bloom 确实可见、图标仍可点击。此改动仍需在受影响的 Windows 设备上确认；若依然不可见，请复制诊断信息，并提供显示器数量和缩放设置。
 
 桌面背景使用 Explorer 的非公开接口，需在实际 Windows 设备上检查多显示器、缩放、唤醒及屏保行为。关闭控制窗口后可通过托盘图标重新打开，或退出应用。

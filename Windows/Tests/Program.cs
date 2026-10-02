@@ -22,6 +22,7 @@ internal static class Program
             CheckSettings(temporary);
             CheckArtworkRejection(temporary);
             CheckArtworkDownloadFailures(temporary);
+            checks += CameraMotionChecks.Run();
             Console.WriteLine($"PASS: {checks} checks; no artwork downloaded and no Windows GUI required.");
             return 0;
         }

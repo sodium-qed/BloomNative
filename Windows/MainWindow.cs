@@ -33,6 +33,8 @@ internal sealed class MainWindow : Window
     private Button browserDownload = null!;
     private Button replay = null!;
     private Button saver = null!;
+    private CameraTrackingWindow? cameraWindow;
+    private bool cameraTracking;
     private Slider slider = null!;
     private bool ready, quitting, downloading, rebuilding, locked, sleeping, displayOff, lidClosed, pendingReplay;
     private string? artworkError;
@@ -46,7 +48,7 @@ internal sealed class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "Bloom Native · Windows 0.1.2";
+        Title = "Bloom Native · Windows 0.1.3";
         Width = 840; Height = 790; MinWidth = 620; MinHeight = 580;
         Background = new SolidColorBrush(Color.FromRgb(242, 245, 251));
         FontFamily = new FontFamily("Segoe UI"); FontSize = 14;
@@ -119,15 +121,16 @@ internal sealed class MainWindow : Window
         body.Children.Add(slider); UpdatePose();
         var options = new WrapPanel();
         var breathe = new CheckBox { Content = T("Gentle breathing", "轻微呼吸效果"), IsChecked = settings.Breathe, Margin = new Thickness(0, 0, 24, 12) };
-        breathe.Click += (_, _) => { settings.Breathe = breathe.IsChecked == true; if (preview != null) preview.Breathe = settings.Breathe; desktop.SetBreathe(settings.Breathe); SaveSettings(); };
+        breathe.Click += (_, _) => { settings.Breathe = breathe.IsChecked == true; ApplyBreathing(); SaveSettings(); };
         var wake = new CheckBox { Content = T("Replay on wake / lid open", "唤醒或开盖时重播"), IsChecked = settings.ReplayOnWake, Margin = new Thickness(0, 0, 0, 12) };
         wake.Click += (_, _) => { settings.ReplayOnWake = wake.IsChecked == true; SaveSettings(); };
         options.Children.Add(breathe); options.Children.Add(wake); body.Children.Add(options);
-        body.Children.Add(new TextBlock { Text = T("Manual unfolding works on any PC. Continuous MacBook hinge-angle sensing is unavailable in this Windows port.", "任何电脑都可手动调节展开程度。此 Windows 版本不支持 MacBook 连续铰链角度传感器。"), TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DimGray, FontSize = 12, Margin = new Thickness(0, 0, 0, 14) });
+        body.Children.Add(new TextBlock { Text = T("Manual unfolding works on any PC. Experimental webcam tracking estimates lid movement against a stationary background; it does not measure a hinge angle.", "任何电脑都可手动调节展开程度。实验性摄像头追踪通过静止背景估计屏幕运动，并非测量铰链角度。"), TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DimGray, FontSize = 12, Margin = new Thickness(0, 0, 0, 14) });
         var actions = new WrapPanel();
         replay = Button(T("Replay unfolding", "重播展开动画"), Replay);
         saver = Button(T("Preview screen saver", "预览屏幕保护程序"), PreviewSaver);
         actions.Children.Add(replay); actions.Children.Add(saver);
+        actions.Children.Add(Button(T("Webcam tracking (experimental)…", "摄像头追踪（实验性）…"), OpenCameraTracking));
         actions.Children.Add(Button(T("Hide to tray", "隐藏到托盘"), Hide));
         actions.Children.Add(Button(T("Copy diagnostics", "复制诊断信息"), CopyDiagnostics));
         actions.Children.Add(Button(T("Quit", "退出"), Quit)); body.Children.Add(actions);
@@ -139,12 +142,12 @@ internal sealed class MainWindow : Window
     private void UpdatePose() => poseLabel.Text = T($"Unfolding: {settings.Progress:P0}", $"展开程度：{settings.Progress:P0}");
     private void UpdateReady()
     {
-        enabled.IsEnabled = ready; slider.IsEnabled = ready; replay.IsEnabled = ready; saver.IsEnabled = ready;
+        enabled.IsEnabled = ready; slider.IsEnabled = ready && !cameraTracking; replay.IsEnabled = ready && !cameraTracking; saver.IsEnabled = ready;
         download.IsEnabled = !ready && !downloading; import.IsEnabled = !ready && !downloading;
         browserDownload.IsEnabled = !ready && !downloading;
         if (ready && preview == null)
         {
-            preview = new BloomView(Artwork.VideoPath) { Breathe = settings.Breathe };
+            preview = new BloomView(Artwork.VideoPath) { Breathe = settings.Breathe && !cameraTracking };
             preview.PlaybackFailed += error => Dispatcher.BeginInvoke(() => SetStatus(T("Playback failed: ", "播放失败：") + error));
             previewContainer.Child = preview; preview.SetProgress(settings.Progress); UpdatePaused();
         }
@@ -194,8 +197,9 @@ internal sealed class MainWindow : Window
     {
         try
         {
-            string report = "Bloom Native Windows 0.1.2\n" +
+            string report = "Bloom Native Windows 0.1.3\n" +
                 $"Artwork verified: {ready}\nWallpaper enabled: {enabled.IsChecked == true}\nPaused: {Paused}\n" +
+                $"Camera running: {cameraWindow?.IsCameraRunning == true}\nCamera controls animation: {cameraTracking}\n" +
                 desktop.GetDiagnostics();
             Clipboard.SetText(report);
             SetStatus(T("Diagnostics copied. Paste them into your support conversation if the wallpaper is still missing.", "诊断信息已复制。如果桌面仍未显示动画，请将信息粘贴到支持对话中。"));
@@ -207,7 +211,7 @@ internal sealed class MainWindow : Window
         if (rebuilding) return;
         if (enabled.IsChecked == true && ready)
         {
-            try { desktop.Start(settings.Progress, settings.Breathe); UpdatePaused(); if (desktop.IsRunning) SetStatus(T("Wallpaper is running behind your desktop icons.", "动态壁纸正在桌面图标下方运行。")); }
+            try { desktop.Start(settings.Progress, settings.Breathe && !cameraTracking); UpdatePaused(); if (desktop.IsRunning) SetStatus(T("Wallpaper is running behind your desktop icons.", "动态壁纸正在桌面图标下方运行。")); }
             catch (Exception ex) { ReportDesktopError(ex.Message); }
         }
         else { desktop.Stop(); SaveSettings(); SetStatus(T("Wallpaper stopped. Your Windows wallpaper is unchanged.", "动态壁纸已停止，原有 Windows 壁纸未被更改。")); }
@@ -221,22 +225,72 @@ internal sealed class MainWindow : Window
     {
         if (quitting || !desktop.IsRunning) return;
         desktop.Stop();
-        try { desktop.Start(settings.Progress, settings.Breathe); UpdatePaused(); }
+        try { desktop.Start(settings.Progress, settings.Breathe && !cameraTracking); UpdatePaused(); }
         catch (Exception ex) { ReportDesktopError(ex.Message); }
     }
     private void Replay()
     {
-        if (!ready) return;
+        if (!ready || cameraTracking) return;
         if (Paused) { pendingReplay = true; return; }
         preview?.ReplayTo(settings.Progress); desktop.ReplayTo(settings.Progress);
     }
     private void UpdatePaused()
     {
         if (quitting) return;
+        if (Paused && cameraWindow != null) _ = StopCameraForPause();
         preview?.SetSuspended(Paused || !IsVisible || WindowState == WindowState.Minimized); desktop.SetSuspended(Paused);
         if (!Paused && pendingReplay) { pendingReplay = false; Replay(); }
     }
-    private void WakeReplay() { if (settings.ReplayOnWake) pendingReplay = true; UpdatePaused(); }
+    private void WakeReplay() { if (settings.ReplayOnWake && !cameraTracking) pendingReplay = true; UpdatePaused(); }
+    private void ApplyBreathing()
+    {
+        bool breathe = settings.Breathe && !cameraTracking;
+        if (preview != null) preview.Breathe = breathe;
+        desktop.SetBreathe(breathe);
+    }
+    private void OpenCameraTracking()
+    {
+        if (Paused || quitting) return;
+        if (cameraWindow == null)
+        {
+            // Keep a separate taskbar window visible even when controls hide to tray.
+            // Constructing this window never opens a camera; its Start button does.
+            var window = new CameraTrackingWindow(settings.Language == "zh");
+            cameraWindow = window;
+            window.ProgressChanged += progress =>
+            {
+                if (quitting || Paused || !double.IsFinite(progress)) return;
+                settings.Progress = Math.Clamp(progress, 0, 1);
+                slider.Value = settings.Progress;
+                UpdatePose();
+                preview?.SetProgress(settings.Progress);
+                desktop.SetProgress(settings.Progress);
+            };
+            window.TrackingChanged += active =>
+            {
+                cameraTracking = active;
+                pendingReplay = false;
+                slider.IsEnabled = ready && !active;
+                replay.IsEnabled = ready && !active;
+                ApplyBreathing();
+            };
+            window.Closed += (_, _) =>
+            {
+                if (!ReferenceEquals(cameraWindow, window)) return;
+                cameraWindow = null;
+                cameraTracking = false;
+                if (!quitting) { UpdateReady(); ApplyBreathing(); SaveSettings(); }
+            };
+        }
+        cameraWindow.Show();
+        cameraWindow.WindowState = WindowState.Normal;
+        cameraWindow.Activate();
+    }
+    private async System.Threading.Tasks.Task StopCameraForPause()
+    {
+        try { if (cameraWindow != null) await cameraWindow.StopAsync(); }
+        catch (Exception ex) { SetStatus(T("Could not stop camera cleanly: ", "无法正常停止摄像头：") + ex.Message); }
+    }
     private void OnSessionSwitch(object sender, SessionSwitchEventArgs e) => Dispatcher.BeginInvoke(() =>
     {
         if (e.Reason == SessionSwitchReason.SessionLock) locked = true;
@@ -292,10 +346,11 @@ internal sealed class MainWindow : Window
         if (quitting) return;
         e.Cancel = true; SaveSettings(); Hide();
     }
-    private void Quit()
+    private async void Quit()
     {
         if (quitting) return;
         SaveSettings(); quitting = true; lifetime.Cancel(); maintenance.Stop();
+        await StopCameraForPause();
         SystemEvents.SessionSwitch -= OnSessionSwitch; SystemEvents.PowerModeChanged -= OnPowerModeChanged; SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         if (displayRegistration != IntPtr.Zero) UnregisterPowerSettingNotification(displayRegistration);
         if (lidRegistration != IntPtr.Zero) UnregisterPowerSettingNotification(lidRegistration);

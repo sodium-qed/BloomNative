@@ -27,13 +27,20 @@ internal sealed class App : Application
                 window.Close();
                 var desktopAttachment = DesktopAttachmentChecks.Run();
                 passed &= desktopAttachment.Passed;
+                // Exercise the bundled WinRT projection without enumerating or opening devices.
+                bool cameraApiAvailable = global::Windows.Foundation.Metadata.ApiInformation.IsTypePresent("Windows.Media.Capture.MediaCapture") &&
+                    global::Windows.Foundation.Metadata.ApiInformation.IsTypePresent("Windows.Media.Capture.Frames.MediaFrameReader");
+                bool cameraPixelCopy = cameraApiAvailable && CameraCapture.CheckPixelConversion();
+                passed &= cameraApiAvailable && cameraPixelCopy;
                 File.WriteAllText(options.TestOutput!, JsonSerializer.Serialize(new
                 {
                     passed,
                     runtime = Environment.Version.ToString(),
                     os = Environment.OSVersion.ToString(),
                     desktopAttachment = new { passed = desktopAttachment.Passed, assertions = desktopAttachment.Assertions, scope = desktopAttachment.Scope },
-                    scope = "WPF initialization and owned HWND desktop-attachment fixture; no artwork, playback, real Explorer embedding, or hardware validation"
+                    cameraApiAvailable,
+                    cameraPixelCopy,
+                    scope = "WPF initialization, owned HWND desktop-attachment fixture, WinRT API availability and in-memory camera pixel conversion; no camera activation, artwork, playback, real Explorer embedding, or hardware validation"
                 }));
                 return passed ? 0 : 1;
             }

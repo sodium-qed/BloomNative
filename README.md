@@ -31,9 +31,9 @@ This is an **ad-hoc signed local build**, not a notarized distribution. The repo
 
 ## Windows version
 
-A separate WPF port is available in [`Windows/`](Windows/README.md) for Windows 10/11 on x64 and ARM64. Build it on Windows with the .NET 8 SDK using `./Windows/build.ps1`, or download the standalone bundles from a successful **Windows build and checks** GitHub Actions run. The Windows app offers manual unfolding, wake replay, desktop animation, English/简体中文 controls, a notification-area icon, and a `.scr` screen saver. It downloads the original animation only when requested in the app; build artifacts do not contain artwork.
+A separate WPF port is available in [`Windows/`](Windows/README.md) for Windows 10 2004 or later and Windows 11 on x64 and ARM64. Build it on Windows with the .NET 8 SDK using `./Windows/build.ps1`, or download the standalone bundles from a successful **Windows build and checks** GitHub Actions run. It offers manual unfolding, wake replay, desktop animation, English/简体中文 controls, a notification-area icon, and a `.scr` screen saver. Version 0.1.3 adds optional, experimental webcam control: explicitly start a selected camera and calibrate visual motion between two animation endpoints. Camera processing stays local, with no audio or saved recordings. It downloads the original animation only when requested in the app; build artifacts do not contain artwork.
 
-Windows does not use the Mac's continuous lid-angle sensor or system-wallpaper snapshots. Its desktop integration uses undocumented Explorer behavior and needs interactive Windows validation; see the [Windows requirements, limitations, and test checklist](Windows/README.md).
+Windows does not use the Mac's continuous lid-angle sensor or system-wallpaper snapshots; webcam control estimates relative image motion, not hinge degrees, and has not been verified on physical camera hardware. Desktop integration uses undocumented Explorer behavior and needs interactive Windows validation; see the [Windows requirements, camera workflow, limitations, and test checklist](Windows/README.md).
 
 ## Use
 
