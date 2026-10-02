@@ -50,6 +50,19 @@ HTTP 403 means the creator's server refused the app's download request. Choose *
 
 Browser access is not guaranteed. If the source also refuses your browser, you can use an existing matching copy of the original animation.
 
+## If the preview works but the desktop still shows the old wallpaper
+
+Version **0.1.2** changes desktop-layer placement for Explorer layouts where Bloom could be attached successfully but remain covered by Windows' existing wallpaper. This change still needs visual confirmation on affected Windows devices. The download handling and browser/local-copy fallback from 0.1.1 are also included.
+
+To check the new build:
+
+1. **Quit** the old build from its notification-area menu. Extract the new bundle into a separate folder, start `BloomNative.Windows.exe`, and confirm the title shows **Windows 0.1.2**. Previously downloaded artwork is reused.
+2. Enable **Dynamic desktop wallpaper** and choose **Replay unfolding**. Minimize the controls or press **Win+D** to view the desktop. Check that Bloom is visible on every monitor and that the replay changes the desktop image, as well as the preview.
+3. Click a desktop icon and open an ordinary application window. Icons should remain usable and application windows should appear above Bloom. Disable the wallpaper and confirm that your original Windows wallpaper becomes visible again.
+4. If Bloom is still hidden, return to the controls and choose **Copy diagnostics**. Include that report with your Windows version, monitor count, display scaling, and whether the preview was working. The report summarizes the desktop window hierarchy and monitor geometry to help identify the layer being used.
+
+An enabled checkbox or successful attachment status alone does not confirm that the animation is visible. The desktop check above is required to confirm this issue is resolved on your machine.
+
 ## Screen saver
 
 Keep the extracted bundle in a permanent folder. Run the main app and download the artwork before using the screen saver. Right-click `BloomNative.scr` to test, configure, or install it through Windows. Installation here means selecting the screen saver in Windows settings; moving or deleting its file afterward can break that selection.
@@ -66,7 +79,7 @@ Windows controls password protection and sign-in policy. The app does not implem
 
 ## Compatibility and limits
 
-- Attaching wallpaper behind desktop icons uses Explorer's **undocumented WorkerW behavior**. Windows updates, alternative shells, Explorer restarts, and mixed-DPI monitor layouts may affect it. If attachment fails, use the controls to disable wallpaper and retry; report your Windows version and monitor setup.
+- Attaching wallpaper behind desktop icons uses Explorer's **undocumented desktop-window hierarchy (Progman/WorkerW)**. Windows updates, alternative shells, Explorer restarts, and mixed-DPI monitor layouts may affect it. If attachment fails or the wallpaper remains hidden, use **Copy diagnostics** and include the report with your Windows version and monitor setup.
 - Rendering and seeking use Windows video decoding, rather than the Mac app's predecoded Metal textures. Exact frame timing and smoothness depend on the decoder and graphics hardware.
 - Desktop animation pauses around sleep/lock transitions. Screen-saver behavior, wake replay, monitor changes, and Explorer recovery require interactive testing on actual Windows machines.
 - WPF and Windows media playback are required. A build or command-line self-test is not evidence that wallpaper attachment or video playback works on every Windows configuration.
@@ -88,7 +101,7 @@ if ($process.ExitCode -ne 0) { throw 'Application self-test failed.' }
 Get-Content -LiteralPath $resultPath
 ```
 
-This initial port was developed in a Linux environment, where its Windows GUI cannot run. CI is configured to run the core checks, publish both architectures, and execute an x64 WPF startup self-test without fetching artwork. ARM64 is built but is not executed on the x64 CI runner. The self-test does not verify video playback or desktop integration. Interactive desktop and screen-saver validation is separate from these checks; run the following matrix on Windows before treating a configuration as verified:
+This initial port was developed in a Linux environment, where its Windows GUI cannot run. CI is configured to run the core checks, publish both architectures, and execute an x64 WPF self-test without fetching artwork. The self-test includes an owned HWND fixture that exercises the production window-creation and attachment methods: layered rendering configuration after WPF initialization, parent and stacking order, position, detection of a covered surface, and cleanup. It does not attach to the real Explorer desktop or verify video playback. ARM64 is built but is not executed on the x64 CI runner. Interactive desktop and screen-saver validation is separate from these checks; run the following matrix on Windows before treating a configuration as verified:
 
 | Manual check | Expected result |
 | --- | --- |
@@ -96,7 +109,9 @@ This initial port was developed in a Linux environment, where its Windows GUI ca
 | Artwork server returns HTTP 403 | Clear refusal message with browser/local-import guidance; no artwork is installed from the failed response. |
 | Import a matching original video, a different file, and a missing file | Matching original is accepted; incorrect or missing files report an error without replacing installed artwork. |
 | Manual position and replay | Position updates; replay unfolds toward the selected position. |
+| Working preview with desktop wallpaper enabled; controls minimized or Win+D pressed | Bloom is visibly animated on the desktop, above the existing Windows wallpaper and below desktop icons. Attachment status alone is insufficient. |
 | Desktop icons and ordinary application windows | Icons remain clickable and application windows stay above the wallpaper. |
+| Disable wallpaper after a successful desktop replay | The existing Windows wallpaper reappears without changing its system setting. |
 | Two monitors, negative monitor coordinates, mixed DPI | Each display is covered correctly without shifting or covering controls. |
 | Add/remove a monitor, then restart Explorer | Wallpaper recovers or reports that desktop attachment is unavailable. |
 | Lock/unlock and sleep/resume | Animation pauses and resumes appropriately; configured wake replay occurs. |
@@ -122,5 +137,7 @@ Windows 版本使用 WPF，支持手动控制展开位置、唤醒时重新播�
 在 Windows PowerShell 中运行 `./Windows/build.ps1`，然后启动 `dist/windows/win-x64/BloomNative.Windows.exe`。Windows ARM64 可使用 `./Windows/build.ps1 -Runtime win-arm64`。首次使用时，请在应用中点击下载原动画；构建和发布包均不包含该素材。界面可切换 **English / 简体中文**。
 
 若下载返回 HTTP 403，可选择在浏览器中打开原动画；如果浏览器可以访问，请保存原视频，再通过“选择本地副本…”导入。导入仍会校验同一 SHA-256。浏览器也可能被拒绝；此时只能使用已有的匹配原视频副本，应用无法保证源文件可访问。
+
+若预览正常但桌面仍显示旧壁纸，请先从托盘退出旧版本，再启动标题显示 **Windows 0.1.2** 的新版本。启用动态壁纸并重新播放，最小化控制窗口或按 **Win+D**，确认桌面上的 Bloom 确实可见、图标仍可点击。此改动仍需在受影响的 Windows 设备上确认；若依然不可见，请复制诊断信息，并提供显示器数量和缩放设置。
 
 桌面背景使用 Explorer 的非公开接口，需在实际 Windows 设备上检查多显示器、缩放、唤醒及屏保行为。关闭控制窗口后可通过托盘图标重新打开，或退出应用。

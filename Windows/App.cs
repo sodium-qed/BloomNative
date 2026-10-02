@@ -25,7 +25,16 @@ internal sealed class App : Application
                 window.UpdateLayout();
                 bool passed = window.IsVisible && System.Windows.Forms.Screen.AllScreens.Length > 0;
                 window.Close();
-                File.WriteAllText(options.TestOutput!, JsonSerializer.Serialize(new { passed, runtime = Environment.Version.ToString(), os = Environment.OSVersion.ToString(), scope = "WPF window initialization only; no artwork, playback, Explorer embedding, or hardware validation" }));
+                var desktopAttachment = DesktopAttachmentChecks.Run();
+                passed &= desktopAttachment.Passed;
+                File.WriteAllText(options.TestOutput!, JsonSerializer.Serialize(new
+                {
+                    passed,
+                    runtime = Environment.Version.ToString(),
+                    os = Environment.OSVersion.ToString(),
+                    desktopAttachment = new { passed = desktopAttachment.Passed, assertions = desktopAttachment.Assertions, scope = desktopAttachment.Scope },
+                    scope = "WPF initialization and owned HWND desktop-attachment fixture; no artwork, playback, real Explorer embedding, or hardware validation"
+                }));
                 return passed ? 0 : 1;
             }
             if (options.Mode is LaunchMode.Saver or LaunchMode.Preview)

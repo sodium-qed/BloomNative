@@ -11,7 +11,7 @@ internal static class Artwork
 {
     internal const string SourceUrl = "https://sixnfive.com/wp-content/uploads/2021/07/curls_hero_05_anim_19_light2.mp4";
     internal const string ExpectedSha256 = "01e08e7efd67574db59352a3cb8be79aeb8e65120bb8aba2f27047e501d5bb75";
-    internal const string UserAgent = "BloomNative-Windows/0.1.1 (+https://github.com/sodium-qed/BloomNative)";
+    internal const string UserAgent = "BloomNative-Windows/0.1.2 (+https://github.com/sodium-qed/BloomNative)";
     internal static string VideoPath => Path.Combine(Settings.DataDirectory, "BloomOriginal.mp4");
     internal static bool Verify(string path)
     {

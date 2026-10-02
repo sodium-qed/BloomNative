@@ -31,6 +31,8 @@ public sealed class BloomView : UserControl, IDisposable
 
     public event Action<string>? PlaybackFailed;
 
+    internal string DiagnosticState => $"loaded={IsLoaded}, visible={IsVisible}, sourceAssigned={sourceAssigned}, mediaOpened={opened}, suspended={suspended}, replaying={replaying}, disposed={disposed}";
+
     public BloomView(string videoPath)
     {
         this.videoPath = videoPath;

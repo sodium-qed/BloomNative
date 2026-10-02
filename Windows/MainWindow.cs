@@ -46,7 +46,7 @@ internal sealed class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "Bloom Native · Windows 0.1.1";
+        Title = "Bloom Native · Windows 0.1.2";
         Width = 840; Height = 790; MinWidth = 620; MinHeight = 580;
         Background = new SolidColorBrush(Color.FromRgb(242, 245, 251));
         FontFamily = new FontFamily("Segoe UI"); FontSize = 14;
@@ -129,6 +129,7 @@ internal sealed class MainWindow : Window
         saver = Button(T("Preview screen saver", "预览屏幕保护程序"), PreviewSaver);
         actions.Children.Add(replay); actions.Children.Add(saver);
         actions.Children.Add(Button(T("Hide to tray", "隐藏到托盘"), Hide));
+        actions.Children.Add(Button(T("Copy diagnostics", "复制诊断信息"), CopyDiagnostics));
         actions.Children.Add(Button(T("Quit", "退出"), Quit)); body.Children.Add(actions);
         status = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DarkSlateGray, Margin = new Thickness(0, 6, 0, 0) }; body.Children.Add(status);
         language.SelectionChanged += (_, _) => { if (rebuilding) return; settings.Language = language.SelectedIndex == 1 ? "zh" : "en"; SaveSettings(); BuildTray(); BuildUi(); };
@@ -188,6 +189,18 @@ internal sealed class MainWindow : Window
         if (dialog.ShowDialog(this) != true) return;
         try { Artwork.Import(dialog.FileName); ready = true; UpdateReady(); }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "Bloom Native", MessageBoxButton.OK, MessageBoxImage.Error); }
+    }
+    private void CopyDiagnostics()
+    {
+        try
+        {
+            string report = "Bloom Native Windows 0.1.2\n" +
+                $"Artwork verified: {ready}\nWallpaper enabled: {enabled.IsChecked == true}\nPaused: {Paused}\n" +
+                desktop.GetDiagnostics();
+            Clipboard.SetText(report);
+            SetStatus(T("Diagnostics copied. Paste them into your support conversation if the wallpaper is still missing.", "诊断信息已复制。如果桌面仍未显示动画，请将信息粘贴到支持对话中。"));
+        }
+        catch (Exception ex) { SetStatus(T("Could not copy diagnostics: ", "无法复制诊断信息：") + ex.Message); }
     }
     private void ToggleDesktop()
     {
