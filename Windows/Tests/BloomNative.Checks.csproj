@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Core.cs" Link="Core.cs" />
+    <Compile Include="../Settings.cs" Link="Settings.cs" />
+    <Compile Include="../Artwork.cs" Link="Artwork.cs" />
+  </ItemGroup>
+</Project>

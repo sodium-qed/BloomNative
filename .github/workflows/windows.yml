@@ -1,0 +1,45 @@
+name: Windows build and checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Run platform-independent checks
+        run: dotnet run --project Windows/Tests/BloomNative.Checks.csproj --configuration Release
+      - name: Publish standalone x64 and ARM64 bundles
+        run: ./Windows/build.ps1 -Runtime @('win-x64', 'win-arm64')
+      - name: Smoke-test the published x64 executable
+        run: |
+          $resultPath = Join-Path $env:RUNNER_TEMP 'bloom-windows-self-test.json'
+          $appPath = Join-Path $env:GITHUB_WORKSPACE 'dist/windows/win-x64/BloomNative.Windows.exe'
+          $process = Start-Process -FilePath $appPath -ArgumentList @('--self-test', "`"$resultPath`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Published application self-test failed (exit $($process.ExitCode))."
+          }
+          if (-not (Test-Path -LiteralPath $resultPath)) {
+            throw 'Published application did not produce its self-test result.'
+          }
+          Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json | Format-List
+      - name: Upload Windows bundles (no artwork)
+        uses: actions/upload-artifact@v4
+        with:
+          name: BloomNative-Windows
+          path: dist/windows/BloomNative-Windows-*.zip
+          if-no-files-found: error
+          retention-days: 14

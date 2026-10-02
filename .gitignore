@@ -11,3 +11,10 @@ xcuserdata/
 /Resources/*.jpg
 /Resources/*.mp4
 /Resources/*.part
+
+# Windows build outputs and IDE state.
+/Windows/**/bin/
+/Windows/**/obj/
+/Windows/.vs/
+/Windows/*.user
+/Windows/*.suo
