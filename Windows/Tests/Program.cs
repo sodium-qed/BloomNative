@@ -1,6 +1,10 @@
 using System;
 using System.Globalization;
 using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 using BloomNative.Windows;
 
 internal static class Program
@@ -17,6 +21,7 @@ internal static class Program
             CheckAnimationBounds();
             CheckSettings(temporary);
             CheckArtworkRejection(temporary);
+            CheckArtworkDownloadFailures(temporary);
             Console.WriteLine($"PASS: {checks} checks; no artwork downloaded and no Windows GUI required.");
             return 0;
         }
@@ -156,6 +161,74 @@ internal static class Program
         Throws<IOException>(() => Artwork.Import(missing), "Import rejects missing artwork");
     }
 
+    private static void CheckArtworkDownloadFailures(string temporary)
+    {
+        // The transport is entirely in memory. These tests never contact the creator
+        // or use the application's real LocalAppData artwork directory.
+        foreach (bool existing in new[] { false, true })
+        {
+            string directory = Path.Combine(temporary, existing ? "forbidden-existing" : "forbidden-new");
+            Directory.CreateDirectory(directory);
+            string destination = Path.Combine(directory, "BloomOriginal.mp4");
+            const string previousContents = "Previously installed file must survive a failed download.";
+            if (existing) File.WriteAllText(destination, previousContents);
+
+            using var handler = new StubHttpHandler(request =>
+            {
+                string userAgent = request.Headers.UserAgent.ToString();
+                Equal(true, userAgent.StartsWith("BloomNative-Windows/", StringComparison.Ordinal) &&
+                    userAgent.Contains("https://github.com/sodium-qed/BloomNative", StringComparison.Ordinal),
+                    "Download identifies the application and its source in User-Agent");
+                return new HttpResponseMessage(HttpStatusCode.Forbidden)
+                {
+                    Content = new StringContent("<html>Forbidden</html>")
+                };
+            });
+            using var client = new HttpClient(handler);
+            var error = Throws<HttpRequestException>(
+                () => Artwork.DownloadToAsync(client, destination, new Progress<int>(), CancellationToken.None).GetAwaiter().GetResult(),
+                "Forbidden download reports an HTTP error");
+            Equal<HttpStatusCode?>(HttpStatusCode.Forbidden, error.StatusCode, "Forbidden status survives for actionable UI guidance");
+            Equal(1, handler.RequestCount, "Forbidden download makes a single request without fallback or retry");
+            if (existing)
+                Equal(previousContents, File.ReadAllText(destination), "Forbidden download preserves installed artwork");
+            else
+                Equal(false, File.Exists(destination), "Forbidden download does not install an error response");
+            Equal(0, Directory.GetFiles(directory, "*.download").Length, "Forbidden download leaves no partial files");
+        }
+
+        string invalidDirectory = Path.Combine(temporary, "invalid-download");
+        Directory.CreateDirectory(invalidDirectory);
+        string invalidDestination = Path.Combine(invalidDirectory, "BloomOriginal.mp4");
+        const string installed = "Existing artwork fixture.";
+        File.WriteAllText(invalidDestination, installed);
+        using var invalidHandler = new StubHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<html>An HTTP 200 error page is not the original animation.</html>")
+        });
+        using var invalidClient = new HttpClient(invalidHandler);
+        var checksumError = Throws<IOException>(
+            () => Artwork.DownloadToAsync(invalidClient, invalidDestination, new Progress<int>(), CancellationToken.None).GetAwaiter().GetResult(),
+            "Successful HTTP status cannot bypass artwork integrity validation");
+        Equal(true, checksumError.Message.Contains("checksum mismatch", StringComparison.OrdinalIgnoreCase), "Invalid content reports checksum mismatch");
+        Equal(1, invalidHandler.RequestCount, "Invalid content makes only the requested download");
+        Equal(installed, File.ReadAllText(invalidDestination), "Invalid content cannot replace installed artwork");
+        Equal(0, Directory.GetFiles(invalidDirectory, "*.download").Length, "Checksum rejection removes the downloaded partial file");
+    }
+
+    private sealed class StubHttpHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, HttpResponseMessage> response;
+        internal int RequestCount { get; private set; }
+        internal StubHttpHandler(Func<HttpRequestMessage, HttpResponseMessage> response) => this.response = response;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RequestCount++;
+            return Task.FromResult(response(request));
+        }
+    }
+
     private static void Equal<T>(T expected, T actual, string message)
     {
         if (!Equals(expected, actual))
@@ -170,10 +243,10 @@ internal static class Program
         checks++;
     }
 
-    private static void Throws<T>(Action action, string message) where T : Exception
+    private static T Throws<T>(Action action, string message) where T : Exception
     {
         try { action(); }
-        catch (T) { checks++; return; }
+        catch (T exception) { checks++; return exception; }
         throw new InvalidOperationException($"{message}: expected {typeof(T).Name}.");
     }
 }

@@ -44,6 +44,12 @@ dotnet run --project Windows/BloomNative.Windows.csproj
 
 The Windows version does not read a continuous laptop hinge angle. Its manual position control and wake replay replace the Mac-specific HID sensor path. It does not overwrite your system wallpaper or create lock-screen snapshots. Exiting removes its desktop surfaces and exposes your existing wallpaper.
 
+## If the artwork download returns HTTP 403
+
+HTTP 403 means the creator's server refused the app's download request. Choose **Open video in browser** to open the [original animation](https://sixnfive.com/wp-content/uploads/2021/07/curls_hero_05_anim_19_light2.mp4) in your normal browser. If the browser can access it, save the original video, then return to Bloom Native and choose **Use a local copy…** to import that file. Import checks the same SHA-256 as the app download; a different animation, converted video, or saved error page will be rejected.
+
+Browser access is not guaranteed. If the source also refuses your browser, you can use an existing matching copy of the original animation.
+
 ## Screen saver
 
 Keep the extracted bundle in a permanent folder. Run the main app and download the artwork before using the screen saver. Right-click `BloomNative.scr` to test, configure, or install it through Windows. Installation here means selecting the screen saver in Windows settings; moving or deleting its file afterward can break that selection.
@@ -87,6 +93,8 @@ This initial port was developed in a Linux environment, where its Windows GUI ca
 | Manual check | Expected result |
 | --- | --- |
 | Fresh launch, then user-initiated artwork download | No automatic artwork download; successful download is checksum-validated. |
+| Artwork server returns HTTP 403 | Clear refusal message with browser/local-import guidance; no artwork is installed from the failed response. |
+| Import a matching original video, a different file, and a missing file | Matching original is accepted; incorrect or missing files report an error without replacing installed artwork. |
 | Manual position and replay | Position updates; replay unfolds toward the selected position. |
 | Desktop icons and ordinary application windows | Icons remain clickable and application windows stay above the wallpaper. |
 | Two monitors, negative monitor coordinates, mixed DPI | Each display is covered correctly without shifting or covering controls. |
@@ -112,5 +120,7 @@ The application source is MIT-licensed; see `LICENSE`. The original Bloom animat
 Windows 版本使用 WPF，支持手动控制展开位置、唤醒时重新播放、轻微呼吸动画、托盘控制及屏幕保护程序。不读取连续的笔记本屏幕开合角度，也不覆盖系统壁纸或锁屏图片。
 
 在 Windows PowerShell 中运行 `./Windows/build.ps1`，然后启动 `dist/windows/win-x64/BloomNative.Windows.exe`。Windows ARM64 可使用 `./Windows/build.ps1 -Runtime win-arm64`。首次使用时，请在应用中点击下载原动画；构建和发布包均不包含该素材。界面可切换 **English / 简体中文**。
+
+若下载返回 HTTP 403，可选择在浏览器中打开原动画；如果浏览器可以访问，请保存原视频，再通过“选择本地副本…”导入。导入仍会校验同一 SHA-256。浏览器也可能被拒绝；此时只能使用已有的匹配原视频副本，应用无法保证源文件可访问。
 
 桌面背景使用 Explorer 的非公开接口，需在实际 Windows 设备上检查多显示器、缩放、唤醒及屏保行为。关闭控制窗口后可通过托盘图标重新打开，或退出应用。

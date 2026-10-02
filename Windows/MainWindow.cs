@@ -2,6 +2,8 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
@@ -28,10 +30,12 @@ internal sealed class MainWindow : Window
     private CheckBox enabled = null!;
     private Button download = null!;
     private Button import = null!;
+    private Button browserDownload = null!;
     private Button replay = null!;
     private Button saver = null!;
     private Slider slider = null!;
     private bool ready, quitting, downloading, rebuilding, locked, sleeping, displayOff, lidClosed, pendingReplay;
+    private string? artworkError;
     private uint? lastLid;
     private HwndSource? hwndSource;
     private IntPtr displayRegistration, lidRegistration;
@@ -42,7 +46,7 @@ internal sealed class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "Bloom Native · Windows";
+        Title = "Bloom Native · Windows 0.1.1";
         Width = 840; Height = 790; MinWidth = 620; MinHeight = 580;
         Background = new SolidColorBrush(Color.FromRgb(242, 245, 251));
         FontFamily = new FontFamily("Segoe UI"); FontSize = 14;
@@ -104,7 +108,8 @@ internal sealed class MainWindow : Window
         var artworkButtons = new WrapPanel { Margin = new Thickness(0, 14, 0, 0) };
         download = Button(T("Download original artwork", "下载原版动画"), () => _ = Download());
         import = Button(T("Use a local copy…", "选择本地副本…"), Import);
-        artworkButtons.Children.Add(download); artworkButtons.Children.Add(import); body.Children.Add(artworkButtons);
+        browserDownload = Button(T("Open video in browser", "在浏览器中打开视频"), OpenArtworkInBrowser);
+        artworkButtons.Children.Add(download); artworkButtons.Children.Add(browserDownload); artworkButtons.Children.Add(import); body.Children.Add(artworkButtons);
         body.Children.Add(new TextBlock { Text = T("Artwork: Microsoft / Six N. Five. Downloaded from the creator and verified locally.", "动画版权归 Microsoft / Six N. Five。直接从原作者下载并在本机校验。"), FontSize = 12, Foreground = Brushes.DimGray, TextWrapping = TextWrapping.Wrap });
         enabled = new CheckBox { Content = T("Dynamic desktop wallpaper", "启用动态桌面壁纸"), IsChecked = active, Margin = new Thickness(0, 20, 0, 14), FontWeight = FontWeights.SemiBold };
         enabled.Checked += (_, _) => ToggleDesktop(); enabled.Unchecked += (_, _) => ToggleDesktop(); body.Children.Add(enabled);
@@ -135,26 +140,47 @@ internal sealed class MainWindow : Window
     {
         enabled.IsEnabled = ready; slider.IsEnabled = ready; replay.IsEnabled = ready; saver.IsEnabled = ready;
         download.IsEnabled = !ready && !downloading; import.IsEnabled = !ready && !downloading;
+        browserDownload.IsEnabled = !ready && !downloading;
         if (ready && preview == null)
         {
             preview = new BloomView(Artwork.VideoPath) { Breathe = settings.Breathe };
             preview.PlaybackFailed += error => Dispatcher.BeginInvoke(() => SetStatus(T("Playback failed: ", "播放失败：") + error));
             previewContainer.Child = preview; preview.SetProgress(settings.Progress); UpdatePaused();
         }
-        SetStatus(ready ? T("Ready. Closing this window keeps the app in the system tray. Use Quit to stop it.", "已就绪。关闭此窗口后程序会留在托盘；请选择“退出”以停止。") : T("The artwork is not bundled. Download it above, or select a matching local BloomOriginal.mp4.", "安装包不含动画素材。请下载，或选择匹配的 BloomOriginal.mp4。"));
+        SetStatus(ready ? T("Ready. Closing this window keeps the app in the system tray. Use Quit to stop it.", "已就绪。关闭此窗口后程序会留在托盘；请选择“退出”以停止。") : artworkError ?? T("The artwork is not bundled. Download it above, or select a matching local BloomOriginal.mp4.", "安装包不含动画素材。请下载，或选择匹配的 BloomOriginal.mp4。"));
     }
     private async System.Threading.Tasks.Task Download()
     {
         if (downloading) return;
+        artworkError = null;
         downloading = true; UpdateReady(); SetStatus(T("Downloading from sixnfive.com…", "正在从 sixnfive.com 下载…"));
         try
         {
             await Artwork.DownloadAsync(new Progress<int>(p => SetStatus(T($"Downloading original artwork… {p}%", $"正在下载原版动画… {p}%"))), lifetime.Token);
             ready = true;
         }
+        catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests)
+        {
+            artworkError = T($"The artwork website refused this download (HTTP {(int)ex.StatusCode.Value}). Choose Open video in browser, save the video, then select it with Use a local copy…",
+                $"动画网站拒绝了本次下载（HTTP {(int)ex.StatusCode.Value}）。请选择“在浏览器中打开视频”并保存视频，然后使用“选择本地副本…”导入。");
+        }
+        catch (OperationCanceledException) when (!lifetime.IsCancellationRequested)
+        {
+            artworkError = T("The download timed out. Try again, or open the video in your browser and import a saved copy.", "下载超时。请重试，或在浏览器中保存视频后导入本地副本。");
+        }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (!quitting) MessageBox.Show(this, ex.Message, "Bloom Native", MessageBoxButton.OK, MessageBoxImage.Error); }
+        catch (Exception ex) { artworkError = ex.Message; }
         finally { downloading = false; if (!quitting) UpdateReady(); }
+    }
+    private void OpenArtworkInBrowser()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(Artwork.SourceUrl) { UseShellExecute = true });
+            artworkError = T("Save the video in your browser, then choose Use a local copy… to import it. The original checksum will still be verified.", "请在浏览器中保存视频，然后选择“选择本地副本…”导入。程序仍会校验原版视频的哈希值。");
+            SetStatus(artworkError);
+        }
+        catch (Exception ex) { SetStatus(ex.Message); }
     }
     private void Import()
     {
