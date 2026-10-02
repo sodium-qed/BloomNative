@@ -22,6 +22,20 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Run platform-independent checks
         run: dotnet run --project Windows/Tests/BloomNative.Checks.csproj --configuration Release
+      - name: Check WPF desktop attachment before packaging
+        run: |
+          $resultPath = Join-Path $env:RUNNER_TEMP 'bloom-attachment-self-test.json'
+          dotnet run --project Windows/BloomNative.Windows.csproj --configuration Release -- --self-test $resultPath
+          $testExitCode = $LASTEXITCODE
+          if (Test-Path -LiteralPath $resultPath) {
+            Get-Content -LiteralPath $resultPath -Raw
+          }
+          if ($testExitCode -ne 0) {
+            throw "Desktop attachment self-test failed (exit $testExitCode)."
+          }
+          if (-not (Test-Path -LiteralPath $resultPath)) {
+            throw 'Desktop attachment self-test did not produce its result.'
+          }
       - name: Publish standalone x64 and ARM64 bundles
         run: ./Windows/build.ps1 -Runtime @('win-x64', 'win-arm64')
       - name: Smoke-test the published x64 executable
@@ -29,6 +43,9 @@ jobs:
           $resultPath = Join-Path $env:RUNNER_TEMP 'bloom-windows-self-test.json'
           $appPath = Join-Path $env:GITHUB_WORKSPACE 'dist/windows/win-x64/BloomNative.Windows.exe'
           $process = Start-Process -FilePath $appPath -ArgumentList @('--self-test', "`"$resultPath`"") -Wait -PassThru
+          if (Test-Path -LiteralPath $resultPath) {
+            Get-Content -LiteralPath $resultPath -Raw
+          }
           if ($process.ExitCode -ne 0) {
             throw "Published application self-test failed (exit $($process.ExitCode))."
           }

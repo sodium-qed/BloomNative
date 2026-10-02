@@ -42,6 +42,10 @@ internal static class DesktopAttachmentChecks
             root = CreateFixtureWindow(0, virtualScreen.Left - 800, virtualScreen.Top - 600, 640, 480);
             nint stock = CreateFixtureWindow(root, 0, 0, 640, 480);
             nint icons = CreateFixtureWindow(root, 0, 0, 32, 32);
+            // CreateWindowEx puts a new child at the bottom of sibling Z-order.
+            // Arrange our owned fixture explicitly, like Explorer's icon layer.
+            if (!Native.SetWindowPos(icons, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not arrange the owned desktop fixture.");
             Check(Native.GetWindow(root, 5) == icons && Native.GetWindow(icons, 2) == stock,
                 "fixture must start with icons above its stock wallpaper child");
             Check(Native.GetWindowRect(root, out Native.Rect rootRect), "fixture root rectangle is available");
