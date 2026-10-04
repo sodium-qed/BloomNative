@@ -29,6 +29,9 @@ internal sealed class App : Application
                 window.Close();
                 var desktopAttachment = DesktopAttachmentChecks.Run();
                 passed &= desktopAttachment.Passed;
+                // Unsupported media stacks are reported explicitly. Once the
+                // ordinary decoder baseline works, either host failing is fatal.
+                var mediaComposition = MediaCompositionChecks.Run();
                 // Exercise the bundled WinRT projection without enumerating or opening devices.
                 bool cameraApiAvailable = global::Windows.Foundation.Metadata.ApiInformation.IsTypePresent("Windows.Media.Capture.MediaCapture") &&
                     global::Windows.Foundation.Metadata.ApiInformation.IsTypePresent("Windows.Media.Capture.Frames.MediaFrameReader");
@@ -47,9 +50,11 @@ internal sealed class App : Application
                     os = Environment.OSVersion.ToString(),
                     desktopAttachment = new { passed = desktopAttachment.Passed, assertions = desktopAttachment.Assertions,
                         compositionVerified = desktopAttachment.CompositionVerified, scope = desktopAttachment.Scope },
+                    mediaComposition = new { verified = mediaComposition.Verified, assertions = mediaComposition.Assertions,
+                        status = mediaComposition.Status, reason = mediaComposition.Reason, scope = mediaComposition.Scope },
                     cameraApiAvailable,
                     cameraPixelCopy,
-                    scope = "WPF initialization, owned on-screen HWND/DWM pixel fixture, WinRT API availability and in-memory camera pixel conversion; no camera activation, artwork, playback, real Explorer embedding, or hardware validation"
+                    scope = "WPF initialization, owned on-screen HWND/DWM pixel fixture, conditional synthetic decoded-media composition, WinRT API availability and in-memory camera pixel conversion; no camera activation, creator artwork, real Explorer embedding, or hardware validation"
                 }));
                 return passed ? 0 : 1;
             }

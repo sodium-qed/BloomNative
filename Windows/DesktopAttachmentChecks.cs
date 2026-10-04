@@ -228,7 +228,7 @@ internal static class DesktopAttachmentChecks
         actual.Left == expected.Left && actual.Top == expected.Top &&
         actual.Right - actual.Left == expected.Width && actual.Bottom - actual.Top == expected.Height;
 
-    private static nint CreateFixtureWindow(nint parent, int x, int y, int width, int height,
+    internal static nint CreateFixtureWindow(nint parent, int x, int y, int width, int height,
         bool noRedirection = false, bool layered = false, bool white = false)
     {
         EnsureFixtureClasses();
@@ -280,7 +280,7 @@ internal static class DesktopAttachmentChecks
         return Native.DefWindowProc(handle, message, wParam, lParam);
     }
 
-    private static void ShowFixture(nint root)
+    internal static void ShowFixture(nint root)
     {
         string before = DescribeWindow(root);
         Require(Native.SetWindowPos(root, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040), "Could not show the owned composition fixture.");
@@ -299,7 +299,8 @@ internal static class DesktopAttachmentChecks
             throw new InvalidOperationException($"Owned fixture lost WS_EX_TOPMOST {phase}; before=[{before}]; after=[{DescribeWindow(root)}]");
     }
 
-    private static bool WaitForPixel(nint root, int x, int y, uint expected, out uint actual, out string diagnostics)
+    internal static bool WaitForPixel(nint root, int x, int y, uint expected, out uint actual, out string diagnostics,
+        int timeoutMilliseconds = 2000)
     {
         actual = uint.MaxValue;
         diagnostics = "Pixel read not attempted.";
@@ -349,7 +350,7 @@ internal static class DesktopAttachmentChecks
             timer.Start();
             try { Dispatcher.PushFrame(frame); }
             finally { timer.Stop(); }
-        } while (timeout.ElapsedMilliseconds < 2000);
+        } while (timeout.ElapsedMilliseconds < timeoutMilliseconds);
         Native.GetWindowRect(root, out Native.Rect bounds);
         int cloakResult = Native.DwmGetWindowAttribute(root, 14, out uint cloaked, sizeof(uint));
         diagnostics += $"; {ordering}; root=[{DescribeWindow(root)}], visible={Native.IsWindowVisible(root)}, cloaked={(cloakResult >= 0 ? cloaked.ToString() : "unavailable")}, bounds=({bounds.Left},{bounds.Top},{bounds.Right},{bounds.Bottom}), sample=({x},{y}), top window=0x{Native.GetTopWindow(0):X}, user interactive={Environment.UserInteractive}, process session={Process.GetCurrentProcess().SessionId}";
@@ -374,7 +375,7 @@ internal static class DesktopAttachmentChecks
     {
         if (!result) throw new Win32Exception(Marshal.GetLastWin32Error(), message);
     }
-    private static void DrainDispatcher()
+    internal static void DrainDispatcher()
     {
         var frame = new DispatcherFrame();
         Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => frame.Continue = false));
