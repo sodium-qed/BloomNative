@@ -51,7 +51,8 @@ internal sealed class App : Application
                     desktopAttachment = new { passed = desktopAttachment.Passed, assertions = desktopAttachment.Assertions,
                         compositionVerified = desktopAttachment.CompositionVerified, scope = desktopAttachment.Scope },
                     mediaComposition = new { verified = mediaComposition.Verified, assertions = mediaComposition.Assertions,
-                        status = mediaComposition.Status, reason = mediaComposition.Reason, scope = mediaComposition.Scope },
+                        status = mediaComposition.Status, reason = mediaComposition.Reason, scope = mediaComposition.Scope,
+                        baselineRedColorRef = mediaComposition.BaselineRed, baselineCyanColorRef = mediaComposition.BaselineCyan },
                     cameraApiAvailable,
                     cameraPixelCopy,
                     scope = "WPF initialization, owned on-screen HWND/DWM pixel fixture, conditional synthetic decoded-media composition, WinRT API availability and in-memory camera pixel conversion; no camera activation, creator artwork, real Explorer embedding, or hardware validation"

@@ -15,8 +15,9 @@ namespace BloomNative.Windows;
 /// <summary>Decoded synthetic pixels through the production view, without creator artwork or devices.</summary>
 internal static class MediaCompositionChecks
 {
-    internal sealed record Result(bool Verified, int Assertions, string Status, string Reason, string Scope);
-    private const string Scope = "Synthetic H.264 red/cyan clip: ordinary MediaElement capability baseline, then production BloomView scrubbing under owned raised and classic desktop hosts. No creator artwork, real Explorer, camera or hardware validation.";
+    internal sealed record Result(bool Verified, int Assertions, string Status, string Reason, string Scope,
+        uint? BaselineRed = null, uint? BaselineCyan = null);
+    private const string Scope = "Synthetic H.264 red/cyan clip: ordinary MediaElement capability/color baseline, then production BloomView scrubbing under owned raised and classic desktop hosts, matching baseline pixels within 8 RGB levels. No creator artwork, real Explorer, camera or hardware validation.";
 
     internal static Result Run()
     {
@@ -30,13 +31,13 @@ internal static class MediaCompositionChecks
             Rectangle area = System.Windows.Forms.Screen.PrimaryScreen?.WorkingArea
                 ?? throw new InvalidOperationException("No desktop is available for synthetic media checks.");
             Rectangle bounds = new(area.Left + 16, area.Top + 16, 240, 180);
-            if (!CheckBaseline(path, bounds, out string reason))
+            if (!CheckBaseline(path, bounds, out string reason, out uint red, out uint cyan))
                 return new Result(false, 0, "unavailable", reason, Scope);
 
             int assertions = 2; // Both decoded baseline colors were visible.
-            assertions += CheckProduction(path, bounds, nested: true);
-            assertions += CheckProduction(path, bounds, nested: false);
-            return new Result(true, assertions, "verified", "Both decoded colors and production seek updates were visible in both host layouts.", Scope);
+            assertions += CheckProduction(path, bounds, nested: true, red, cyan);
+            assertions += CheckProduction(path, bounds, nested: false, red, cyan);
+            return new Result(true, assertions, "verified", "Both decoded colors and production seek updates were visible in both host layouts.", Scope, red, cyan);
         }
         finally
         {
@@ -52,8 +53,9 @@ internal static class MediaCompositionChecks
         }
     }
 
-    private static bool CheckBaseline(string path, Rectangle bounds, out string reason)
+    private static bool CheckBaseline(string path, Rectangle bounds, out string reason, out uint red, out uint cyan)
     {
+        red = cyan = uint.MaxValue;
         var media = new MediaElement
         {
             LoadedBehavior = MediaState.Manual, UnloadedBehavior = MediaState.Manual,
@@ -88,13 +90,18 @@ internal static class MediaCompositionChecks
             foreach (var sample in new[] { (0.25, 0x0000FFu), (0.75, 0xFFFF00u) })
             {
                 media.Position = TimeSpan.FromSeconds(media.NaturalDuration.TimeSpan.TotalSeconds * sample.Item1);
+                // Windows' video color conversion can retain limited-range RGB.
+                // Identify the strongly distinct baseline colors within 32, then
+                // compare production rendering to these actual pixels within 8.
                 if (!DesktopAttachmentChecks.WaitForPixel(root, bounds.Left + 120, bounds.Top + 90,
-                    sample.Item2, out uint actual, out string diagnostics, 10000))
+                    sample.Item2, out uint actual, out string diagnostics, 10000, colorTolerance: 32))
                 {
                     reason = $"Ordinary MediaElement did not display its decoded baseline at {sample.Item1:P0}; " +
                         $"pixel=0x{actual:X6}; media error={failure ?? "none"}; {diagnostics}";
                     return false;
                 }
+                if (sample.Item1 == 0.25) red = actual;
+                else cyan = actual;
             }
             reason = string.Empty;
             return true;
@@ -108,7 +115,7 @@ internal static class MediaCompositionChecks
         }
     }
 
-    private static int CheckProduction(string path, Rectangle bounds, bool nested)
+    private static int CheckProduction(string path, Rectangle bounds, bool nested, uint red, uint cyan)
     {
         nint root = 0;
         NativeDesktopSurface? host = null;
@@ -149,9 +156,9 @@ internal static class MediaCompositionChecks
                         $"expected=0x{color:X6}, actual=0x{actual:X6}; media error={failure ?? "none"}; {view.DiagnosticState}; {diagnostics}");
                 assertions++;
             }
-            CheckPixel(bounds.Left + 120, bounds.Top + 90, 0x0000FF, "production BloomView must display decoded red at 25%");
+            CheckPixel(bounds.Left + 120, bounds.Top + 90, red, "production BloomView must display decoded red at 25%");
             view.SetProgress(0.75);
-            CheckPixel(bounds.Left + 120, bounds.Top + 90, 0xFFFF00, "production BloomView must display decoded cyan after seeking to 75%");
+            CheckPixel(bounds.Left + 120, bounds.Top + 90, cyan, "production BloomView must display decoded cyan after seeking to 75%");
             if (nested)
                 CheckPixel(bounds.Left + 20, bounds.Top + 20, 0xFFFFFF, "owned icon marker must remain above decoded video");
             return assertions;

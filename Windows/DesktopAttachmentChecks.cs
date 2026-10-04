@@ -300,7 +300,7 @@ internal static class DesktopAttachmentChecks
     }
 
     internal static bool WaitForPixel(nint root, int x, int y, uint expected, out uint actual, out string diagnostics,
-        int timeoutMilliseconds = 2000)
+        int timeoutMilliseconds = 2000, int colorTolerance = 8)
     {
         actual = uint.MaxValue;
         diagnostics = "Pixel read not attempted.";
@@ -339,7 +339,7 @@ internal static class DesktopAttachmentChecks
                             : "Owned screen pixel was read but has not reached the expected color";
                     }
                     finally { Native.ReleaseDC(0, dc); }
-                    if (ColorMatches(actual, expected)) return true;
+                    if (ColorMatches(actual, expected, colorTolerance)) return true;
                 }
                 else diagnostics = $"GetDC(screen) returned null; Win32 error={Marshal.GetLastWin32Error()}";
             }
@@ -366,10 +366,10 @@ internal static class DesktopAttachmentChecks
         return $"HWND=0x{handle:X}, class={name}, PID={process}, parent=0x{Native.GetParent(handle):X}, ancestor=0x{Native.GetAncestor(handle, 2):X}, exstyle=0x{Native.GetStyle(handle, -20):X}, above=0x{Native.GetWindow(handle, 3):X}, below=0x{Native.GetWindow(handle, 2):X}";
     }
 
-    private static bool ColorMatches(uint actual, uint expected) => actual != uint.MaxValue &&
-        Math.Abs((int)(actual & 255) - (int)(expected & 255)) <= 8 &&
-        Math.Abs((int)((actual >> 8) & 255) - (int)((expected >> 8) & 255)) <= 8 &&
-        Math.Abs((int)((actual >> 16) & 255) - (int)((expected >> 16) & 255)) <= 8;
+    private static bool ColorMatches(uint actual, uint expected, int tolerance) => actual != uint.MaxValue &&
+        Math.Abs((int)(actual & 255) - (int)(expected & 255)) <= tolerance &&
+        Math.Abs((int)((actual >> 8) & 255) - (int)((expected >> 8) & 255)) <= tolerance &&
+        Math.Abs((int)((actual >> 16) & 255) - (int)((expected >> 16) & 255)) <= tolerance;
     private static string DescribeColor(uint color) => color == uint.MaxValue ? "unavailable" : $"({color & 255},{(color >> 8) & 255},{(color >> 16) & 255})";
     private static void Require(bool result, string message)
     {
