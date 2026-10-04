@@ -23,6 +23,8 @@ internal sealed class MainWindow : Window
     private readonly DesktopHost desktop;
     private readonly DispatcherTimer maintenance;
     private readonly CancellationTokenSource lifetime = new();
+    private readonly DesktopRecovery recovery = new();
+    private readonly Stopwatch recoveryClock = Stopwatch.StartNew();
     private BloomView? preview;
     private Border previewContainer = null!;
     private TextBlock status = null!;
@@ -37,7 +39,8 @@ internal sealed class MainWindow : Window
     private bool cameraTracking;
     private bool desktopTestPattern;
     private Slider slider = null!;
-    private bool ready, quitting, downloading, rebuilding, locked, sleeping, displayOff, lidClosed, pendingReplay;
+    private bool ready, quitting, downloading, rebuilding, locked, sleeping, displayOff, lidClosed, pendingReplay, startingDesktop;
+    private bool verifyingArtwork = true;
     private string? artworkError;
     private string? desktopError;
     private uint? lastLid;
@@ -50,7 +53,7 @@ internal sealed class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "Bloom Native · Windows 0.1.4";
+        Title = ApplicationInfo.DisplayName;
         Width = 840; Height = 790; MinWidth = 620; MinHeight = 580;
         Background = new SolidColorBrush(Color.FromRgb(242, 245, 251));
         FontFamily = new FontFamily("Segoe UI"); FontSize = 14;
@@ -68,13 +71,14 @@ internal sealed class MainWindow : Window
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         maintenance = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-        maintenance.Tick += (_, _) => { if (desktop.IsRunning && !Paused && !desktop.IsHealthy()) ReattachDesktop(); };
+        maintenance.Tick += (_, _) => MaintainDesktop();
         maintenance.Start();
         Loaded += async (_, _) =>
         {
             try { ready = await System.Threading.Tasks.Task.Run(() => Artwork.Verify(Artwork.VideoPath)); }
-            catch (Exception ex) { SetStatus(ex.Message); }
+            catch (Exception ex) { artworkError = T("Could not verify the saved artwork: ", "无法校验已保存的动画：") + ex.Message; }
             if (quitting) return;
+            verifyingArtwork = false;
             UpdateReady();
         };
     }
@@ -85,6 +89,7 @@ internal sealed class MainWindow : Window
         menu.Items.Add(T("Open controls", "打开控制面板"), null, (_, _) => Dispatcher.BeginInvoke(ShowControls));
         menu.Items.Add(T("Replay unfolding", "重播展开动画"), null, (_, _) => Dispatcher.BeginInvoke(Replay));
         menu.Items.Add(T("Stop wallpaper", "停止动态壁纸"), null, (_, _) => Dispatcher.BeginInvoke(() => enabled.IsChecked = false));
+        menu.Items.Add(T("Diagnostics…", "诊断信息…"), null, (_, _) => Dispatcher.BeginInvoke(() => ShowDiagnostics(CreateDiagnostics())));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(T("Quit", "退出"), null, (_, _) => Dispatcher.BeginInvoke(Quit));
         tray.ContextMenuStrip = menu;
@@ -99,7 +104,7 @@ internal sealed class MainWindow : Window
     {
         rebuilding = true;
         preview?.Dispose(); preview = null;
-        bool active = desktop.IsRunning;
+        bool active = recovery.Requested;
         var body = new StackPanel { Margin = new Thickness(26) };
         Content = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var header = new DockPanel();
@@ -146,19 +151,22 @@ internal sealed class MainWindow : Window
     private void UpdateReady()
     {
         enabled.IsEnabled = ready; slider.IsEnabled = ready && !cameraTracking; replay.IsEnabled = ready && !cameraTracking; saver.IsEnabled = ready;
-        download.IsEnabled = !ready && !downloading; import.IsEnabled = !ready && !downloading;
-        browserDownload.IsEnabled = !ready && !downloading;
+        download.IsEnabled = !ready && !downloading && !verifyingArtwork; import.IsEnabled = !ready && !downloading && !verifyingArtwork;
+        browserDownload.IsEnabled = !ready && !downloading && !verifyingArtwork;
         if (ready && preview == null)
         {
             preview = new BloomView(Artwork.VideoPath) { Breathe = settings.Breathe && !cameraTracking };
             preview.PlaybackFailed += error => Dispatcher.BeginInvoke(() => SetStatus(T("Playback failed: ", "播放失败：") + error));
             previewContainer.Child = preview; preview.SetProgress(settings.Progress); UpdatePaused();
         }
-        SetStatus(ready ? T("Ready. Closing this window keeps the app in the system tray. Use Quit to stop it.", "已就绪。关闭此窗口后程序会留在托盘；请选择“退出”以停止。") : artworkError ?? T("The artwork is not bundled. Download it above, or select a matching local BloomOriginal.mp4.", "安装包不含动画素材。请下载，或选择匹配的 BloomOriginal.mp4。"));
+        SetStatus(verifyingArtwork ? T("Checking saved artwork…", "正在检查已保存的动画…")
+            : recovery.Requested && !desktop.IsRunning && desktopError != null ? DesktopFailureStatus()
+            : ready ? T("Ready. Closing this window keeps the app in the system tray. Use Quit to stop it.", "已就绪。关闭此窗口后程序会留在托盘；请选择“退出”以停止。")
+            : artworkError ?? T("The artwork is not bundled. Download it above, or select a matching local BloomOriginal.mp4.", "安装包不含动画素材。请下载，或选择匹配的 BloomOriginal.mp4。"));
     }
     private async System.Threading.Tasks.Task Download()
     {
-        if (downloading) return;
+        if (downloading || verifyingArtwork || ready || quitting) return;
         artworkError = null;
         downloading = true; UpdateReady(); SetStatus(T("Downloading from sixnfive.com…", "正在从 sixnfive.com 下载…"));
         try
@@ -191,54 +199,137 @@ internal sealed class MainWindow : Window
     }
     private void Import()
     {
+        if (downloading || verifyingArtwork || ready || quitting) return;
         var dialog = new OpenFileDialog { Filter = "Original Bloom animation (*.mp4)|*.mp4", CheckFileExists = true };
         if (dialog.ShowDialog(this) != true) return;
         try { Artwork.Import(dialog.FileName); ready = true; UpdateReady(); }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "Bloom Native", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
+    private string CreateDiagnostics()
+    {
+        string report = ApplicationInfo.DisplayName + "\n" +
+            $"Artwork verified: {ready}\nArtwork verification pending: {verifyingArtwork}\nWallpaper requested: {recovery.Requested}\nPaused: {Paused}\n" +
+            $"Recovery failures: {recovery.FailureCount}/{DesktopRecovery.MaximumFailures}\nRecovery exhausted: {recovery.Exhausted}\n" +
+            $"Camera running: {cameraWindow?.IsCameraRunning == true}\nCamera controls animation: {cameraTracking}\n" +
+            $"Desktop test pattern: {desktopTestPattern}\nLast desktop error: {desktopError ?? "none"}\n";
+        try { return report + desktop.GetDiagnostics(); }
+        catch (Exception ex) { return report + "Could not read all desktop details: " + ex.Message; }
+    }
     private void CopyDiagnostics()
     {
+        string report = CreateDiagnostics();
         try
         {
-            string report = "Bloom Native Windows 0.1.4\n" +
-                $"Artwork verified: {ready}\nWallpaper enabled: {enabled.IsChecked == true}\nPaused: {Paused}\n" +
-                $"Camera running: {cameraWindow?.IsCameraRunning == true}\nCamera controls animation: {cameraTracking}\n" +
-                $"Desktop test pattern: {desktopTestPattern}\nLast desktop error: {desktopError ?? "none"}\n" +
-                desktop.GetDiagnostics();
             Clipboard.SetText(report);
             SetStatus(T("Diagnostics copied. Paste them into your support conversation if the wallpaper is still missing.", "诊断信息已复制。如果桌面仍未显示动画，请将信息粘贴到支持对话中。"));
         }
-        catch (Exception ex) { SetStatus(T("Could not copy diagnostics: ", "无法复制诊断信息：") + ex.Message); }
+        catch (Exception ex)
+        {
+            SetStatus(T("Could not copy automatically; the report is open for selection. ", "无法自动复制，已打开可选择的诊断报告。 ") + ex.Message);
+            ShowDiagnostics(report);
+        }
+    }
+    private void ShowDiagnostics(string report)
+    {
+        if (quitting) return;
+        ShowControls();
+        var text = new TextBox
+        {
+            Text = report, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            FontFamily = new FontFamily("Consolas"), Margin = new Thickness(12)
+        };
+        var body = new DockPanel();
+        var instructions = new TextBlock
+        {
+            Text = T("Select the report and press Ctrl+C to copy. This window remains available if automatic clipboard access fails.", "选择报告后按 Ctrl+C 复制。自动剪贴板访问失败时，仍可在此窗口选择文本。"),
+            TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12, 12, 12, 0)
+        };
+        DockPanel.SetDock(instructions, Dock.Top); body.Children.Add(instructions); body.Children.Add(text);
+        var window = new Window
+        {
+            Title = T("Diagnostics · Bloom Native", "诊断信息 · Bloom Native"), Owner = this,
+            Width = 720, Height = 520, MinWidth = 360, MinHeight = 240,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = body
+        };
+        window.Show(); text.Focus(); text.SelectAll();
     }
     private void ToggleDesktop()
     {
-        if (rebuilding) return;
+        if (rebuilding || quitting) return;
         if (enabled.IsChecked == true && ready)
         {
-            try
-            {
-                desktopError = null;
-                desktop.Start(settings.Progress, settings.Breathe && !cameraTracking);
-                desktop.SetDiagnosticPattern(desktopTestPattern);
-                UpdatePaused();
-                if (desktop.IsRunning) SetStatus(T("Wallpaper window attached. Minimize the controls to check that Bloom is visible; use Test desktop layer if it is missing.", "壁纸窗口已连接。请最小化控制面板，确认 Bloom 可见；若未显示，请使用“测试桌面图层”。"));
-            }
-            catch (Exception ex) { ReportDesktopError(ex.Message); }
+            recovery.Request(true);
+            StartDesktop();
         }
-        else { desktop.Stop(); desktopTestPattern = false; SaveSettings(); SetStatus(T("Wallpaper stopped. Your Windows wallpaper is unchanged.", "动态壁纸已停止，原有 Windows 壁纸未被更改。")); }
+        else
+        {
+            recovery.Request(false);
+            desktop.Stop(); desktopTestPattern = false; SaveSettings();
+            SetStatus(T("Wallpaper stopped. Your Windows wallpaper is unchanged.", "动态壁纸已停止，原有 Windows 壁纸未被更改。"));
+        }
     }
-    private void ReportDesktopError(string error) => Dispatcher.BeginInvoke(() =>
+    private void StartDesktop()
     {
+        if (quitting || startingDesktop || !recovery.Requested || !ready) return;
+        startingDesktop = true;
+        try
+        {
+            desktop.Start(settings.Progress, settings.Breathe && !cameraTracking);
+            if (!desktop.IsRunning) return; // Start already reported and scheduled its failure.
+            recovery.Started(recoveryClock.Elapsed);
+            desktopError = null;
+            desktop.SetDiagnosticPattern(desktopTestPattern);
+            UpdatePaused();
+            SetStatus(T("Wallpaper window attached. Minimize the controls to check that Bloom is visible; use Test desktop layer if it is missing.", "壁纸窗口已连接。请最小化控制面板，确认 Bloom 可见；若未显示，请使用“测试桌面图层”。"));
+        }
+        catch (Exception ex) { ReportDesktopError(ex.Message); }
+        finally { startingDesktop = false; }
+    }
+    private void ReportDesktopError(string error)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            if (!Dispatcher.HasShutdownStarted) Dispatcher.BeginInvoke(() => ReportDesktopError(error));
+            return;
+        }
+        if (quitting || !recovery.Requested) return;
         desktopError = error;
-        desktop.Stop(); enabled.IsChecked = false;
-        SetStatus(T("Desktop wallpaper could not start: ", "无法启动动态壁纸：") + error + T(" You can still use the preview and screen saver.", "您仍可使用预览和屏幕保护程序。"));
-    });
+        desktop.Stop();
+        recovery.Failed(recoveryClock.Elapsed);
+        SetStatus(DesktopFailureStatus());
+    }
+    private string DesktopFailureStatus()
+    {
+        string next = recovery.Exhausted
+            ? T(" Automatic retries have paused. Turn Dynamic desktop wallpaper off and on to try again.", " 自动重试已暂停。请关闭再开启动态桌面壁纸以重试。")
+            : T(" The app will retry automatically. Turn Dynamic desktop wallpaper off to cancel.", " 程序将自动重试。关闭动态桌面壁纸可取消重试。");
+        return T("Desktop wallpaper is unavailable: ", "动态桌面壁纸暂时不可用：") + desktopError + next +
+            T(" Preview and screen saver remain available.", "预览和屏幕保护程序仍可使用。");
+    }
+    private void MaintainDesktop()
+    {
+        if (quitting || startingDesktop || !recovery.Requested || Paused) return;
+        try
+        {
+            if (desktop.IsRunning)
+            {
+                if (desktop.IsHealthy()) recovery.Healthy(recoveryClock.Elapsed);
+                else ReportDesktopError(T("Explorer's desktop surface changed or became unavailable.", "Explorer 桌面图层已更改或暂时不可用。"));
+            }
+            else if (recovery.ShouldRetry(recoveryClock.Elapsed)) StartDesktop();
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or COMException)
+        {
+            ReportDesktopError(ex.Message);
+        }
+    }
     private void ReattachDesktop()
     {
-        if (quitting || !desktop.IsRunning) return;
+        // Display-change notifications must not bypass a failed attempt's backoff.
+        if (quitting || startingDesktop || !recovery.Requested || !desktop.IsRunning || Paused) return;
         desktop.Stop();
-        try { desktop.Start(settings.Progress, settings.Breathe && !cameraTracking); desktop.SetDiagnosticPattern(desktopTestPattern); UpdatePaused(); }
-        catch (Exception ex) { ReportDesktopError(ex.Message); }
+        StartDesktop();
     }
     private void Replay()
     {
@@ -374,7 +465,7 @@ internal sealed class MainWindow : Window
     private async void Quit()
     {
         if (quitting) return;
-        SaveSettings(); quitting = true; lifetime.Cancel(); maintenance.Stop();
+        SaveSettings(); quitting = true; recovery.Request(false); lifetime.Cancel(); maintenance.Stop();
         await StopCameraForPause();
         SystemEvents.SessionSwitch -= OnSessionSwitch; SystemEvents.PowerModeChanged -= OnPowerModeChanged; SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         if (displayRegistration != IntPtr.Zero) UnregisterPowerSettingNotification(displayRegistration);

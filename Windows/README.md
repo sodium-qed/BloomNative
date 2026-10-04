@@ -70,15 +70,17 @@ Browser access is not guaranteed. If the source also refuses your browser, you c
 
 ## If the preview works but the desktop still shows the old wallpaper
 
-Version **0.1.4** changes the wallpaper rendering path for Windows desktops where attachment and video playback can succeed while the desktop image remains invisible. For modern Explorer layouts, it puts a normal opaque WPF rendering window inside a native layered host with constant alpha 255 (fully opaque). This avoids relying on WPF's per-pixel transparent-window rendering under Explorer's non-redirection window hierarchy. It still needs visual confirmation on affected Windows devices. Experimental webcam control and the artwork browser/local-copy fallback remain included.
+Version **0.1.5** includes the desktop composition fix introduced in 0.1.4, plus display-geometry checks and recovery fixes. For modern Explorer layouts, it puts a normal opaque WPF rendering window inside a native layered host with constant alpha 255 (fully opaque). This avoids relying on WPF's per-pixel transparent-window rendering under Explorer's non-redirection window hierarchy. It still needs visual confirmation on affected Windows devices. Experimental webcam control and the artwork browser/local-copy fallback remain included.
+
+This update also preserves the requested wallpaper state across temporary Explorer failures, retries with a bounded delay, detects surfaces that have moved or become clipped, and safely handles native windows destroyed during a shell restart. Turning the wallpaper off cancels recovery. Downloads now have a deadline covering the whole transfer, and imports verify a staged copy before replacing existing artwork. Initial artwork verification finishes before download/import controls become available.
 
 To check the new build:
 
-1. **Quit** the old build from its notification-area menu. Extract the new bundle into a separate folder, start `BloomNative.Windows.exe`, and confirm the title shows **Windows 0.1.4**. Previously downloaded artwork is reused.
+1. **Quit** the old build from its notification-area menu. Extract the new bundle into a separate folder, start `BloomNative.Windows.exe`, and confirm the title shows **Windows 0.1.5**. Previously downloaded artwork is reused.
 2. Enable **Dynamic desktop wallpaper** and choose **Replay unfolding**. Minimize the controls or press **Win+D** to view the desktop. Check that Bloom is visible on every monitor and that the replay changes the desktop image, as well as the preview.
 3. Click a desktop icon and open an ordinary application window. Icons should remain usable and application windows should appear above Bloom. Disable the wallpaper and confirm that your original Windows wallpaper becomes visible again.
 4. If Bloom is still hidden, keep **Dynamic desktop wallpaper** enabled and click **Test desktop layer**, then press **Win+D**. Look for the magenta/cyan **BLOOM DESKTOP TEST** pattern behind your icons on each desktop. This affects the desktop surfaces only. Click **Test desktop layer** again to restore the video. A visible pattern with missing video points toward media rendering; an invisible pattern also leaves desktop-host visibility unresolved.
-5. Choose **Copy diagnostics** and include the report with your Windows version, monitor count, display scaling, whether the preview was working, and whether the test pattern appeared. The report includes the test-pattern state and last desktop error, along with desktop-window hierarchy and monitor geometry.
+5. Open **Diagnostics** from the notification-area menu, or choose **Copy diagnostics** in the controls. If the clipboard is unavailable, use the selectable report in the diagnostics window. Include the report with your Windows version, monitor count, display scaling, whether the preview was working, and whether the test pattern appeared. The report includes the test-pattern state and last desktop error, along with desktop-window hierarchy and monitor geometry.
 
 An enabled checkbox or successful attachment status alone does not confirm that the animation is visible. The desktop check above is required to confirm this issue is resolved on your machine.
 
@@ -186,8 +188,10 @@ Windows 版本使用 WPF，要求 Windows 10 2004（19041）及以上或 Windows
 
 若下载返回 HTTP 403，可选择在浏览器中打开原动画；如果浏览器可以访问，请保存原视频，再通过“选择本地副本…”导入。导入仍会校验同一 SHA-256。浏览器也可能被拒绝；此时只能使用已有的匹配原视频副本，应用无法保证源文件可访问。
 
-0.1.4 调整了桌面渲染方式：针对现代 Explorer 布局，用完全不透明的原生分层窗口承载普通 WPF 渲染子窗口，处理“已连接、视频正常播放，但桌面仍不可见”的情况。此改动仍需在受影响的 Windows 设备上确认。
+0.1.5 包含 0.1.4 的桌面渲染修复，并增加窗口位置检查、Explorer 故障后的有限重试和原生窗口清理保护。下载超时现在覆盖整个传输过程；导入时先复制并校验，再替换原文件。桌面渲染方式：针对现代 Explorer 布局，用完全不透明的原生分层窗口承载普通 WPF 渲染子窗口，处理“已连接、视频正常播放，但桌面仍不可见”的情况。此改动仍需在受影响的 Windows 设备上确认。
 
-若预览正常但桌面仍显示旧壁纸，请先从托盘退出旧版本，再启动标题显示 **Windows 0.1.4** 的新版本。启用动态壁纸并重新播放，最小化控制窗口或按 **Win+D**，确认桌面上的 Bloom 确实可见、图标仍可点击。若依然不可见，保持动态壁纸启用，点击“测试桌面图层”，再按 **Win+D**，检查图标下方是否出现洋红色/青色 **BLOOM DESKTOP TEST** 图案；再次点击该按钮恢复视频。图案可见但视频不可见时，更可能是视频渲染问题。请复制诊断信息，并说明图案是否出现、显示器数量和缩放设置。
+若预览正常但桌面仍显示旧壁纸，请先从托盘退出旧版本，再启动标题显示 **Windows 0.1.5** 的新版本。启用动态壁纸并重新播放，最小化控制窗口或按 **Win+D**，确认桌面上的 Bloom 确实可见、图标仍可点击。若依然不可见，保持动态壁纸启用，点击“测试桌面图层”，再按 **Win+D**，检查图标下方是否出现洋红色/青色 **BLOOM DESKTOP TEST** 图案；再次点击该按钮恢复视频。图案可见但视频不可见时，更可能是视频渲染问题。请复制诊断信息，并说明图案是否出现、显示器数量和缩放设置。
 
 桌面背景使用 Explorer 的非公开接口，需在实际 Windows 设备上检查多显示器、缩放、唤醒及屏保行为。关闭控制窗口后可通过托盘图标重新打开，或退出应用。
+
+托盘菜单现在提供“诊断信息…”窗口。自动复制失败时，仍可在窗口中选择诊断文本。关闭动态壁纸会取消自动恢复；连续恢复失败后，请关闭再重新启用以手动重试。

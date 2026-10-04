@@ -22,6 +22,8 @@ internal static class Program
             CheckSettings(temporary);
             CheckArtworkRejection(temporary);
             CheckArtworkDownloadFailures(temporary);
+            checks += ArtworkTransferChecks.Run(temporary);
+            checks += DesktopRecoveryChecks.Run();
             checks += CameraMotionChecks.Run();
             Console.WriteLine($"PASS: {checks} checks; no artwork downloaded and no Windows GUI required.");
             return 0;
@@ -158,8 +160,9 @@ internal static class Program
         string badArtwork = Path.Combine(temporary, "wrong.mp4");
         File.WriteAllText(badArtwork, "This is a tiny test fixture, not Bloom artwork.");
         Equal(false, Artwork.Verify(badArtwork), "Incorrect SHA-256 is rejected");
-        Throws<IOException>(() => Artwork.Import(badArtwork), "Import rejects wrong SHA-256 before installing artwork");
-        Throws<IOException>(() => Artwork.Import(missing), "Import rejects missing artwork");
+        string destination = Path.Combine(temporary, "import-rejection", "BloomOriginal.mp4");
+        Throws<IOException>(() => Artwork.ImportTo(badArtwork, destination), "Import rejects wrong SHA-256 before installing artwork");
+        Throws<IOException>(() => Artwork.ImportTo(missing, destination), "Import rejects missing artwork");
     }
 
     private static void CheckArtworkDownloadFailures(string temporary)

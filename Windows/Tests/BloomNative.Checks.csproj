@@ -6,7 +6,9 @@
     <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../ApplicationInfo.cs" Link="ApplicationInfo.cs" />
     <Compile Include="../Core.cs" Link="Core.cs" />
+    <Compile Include="../DesktopRecovery.cs" Link="DesktopRecovery.cs" />
     <Compile Include="../Settings.cs" Link="Settings.cs" />
     <Compile Include="../Artwork.cs" Link="Artwork.cs" />
     <Compile Include="../CameraMotion.cs" Link="CameraMotion.cs" />

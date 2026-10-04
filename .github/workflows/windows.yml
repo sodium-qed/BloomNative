@@ -60,3 +60,11 @@ jobs:
           path: dist/windows/BloomNative-Windows-*.zip
           if-no-files-found: error
           retention-days: 14
+      - name: Upload Windows self-test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BloomNative-Windows-checks
+          path: ${{ runner.temp }}/bloom-*-self-test.json
+          if-no-files-found: ignore
+          retention-days: 14

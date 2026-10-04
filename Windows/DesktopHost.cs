@@ -78,8 +78,15 @@ internal sealed class DesktopHost : IDisposable
         {
             // Hide first, including when Explorer has unexpectedly reparented a window.
             foreach (Surface surface in _surfaces)
-                if (Native.IsWindow(surface.AttachmentHandle))
-                    Native.ShowWindow(surface.AttachmentHandle, 0);
+            {
+                // An HWND can be recycled after Explorer destroys its children.
+                // Only hide a handle that is still owned by this surface.
+                if (surface.NativeHost?.IsAlive == true)
+                    Native.ShowWindow(surface.NativeHost.Handle, 0);
+                if (!surface.Source.IsDisposed && surface.Source.Handle == surface.Handle &&
+                    Native.IsWindow(surface.Handle))
+                    Native.ShowWindow(surface.Handle, 0);
+            }
 
             foreach (Surface surface in _surfaces)
             {
@@ -158,21 +165,23 @@ internal sealed class DesktopHost : IDisposable
         {
             if (_surfaces.Count != _displays.Length || !_displays.SequenceEqual(GetDisplays()))
                 return false;
+
+            foreach (Surface surface in _surfaces)
+            {
+                if (!IsSurfaceHealthy(surface.AttachmentHandle, _layer) ||
+                    !IsContentHealthy(surface.Handle, _layer, surface.NativeHost) || surface.Source.IsDisposed ||
+                    !HasExpectedGeometry(surface.AttachmentHandle, surface.Bounds) ||
+                    !HasExpectedGeometry(surface.Handle, surface.Bounds) ||
+                    !surface.Window.IsVisible || !surface.View.IsLoaded ||
+                    surface.Source.CompositionTarget is not { UsesPerPixelOpacity: false })
+                    return false;
+            }
+            return true;
         }
         catch (Exception error) when (error is Win32Exception or InvalidOperationException)
         {
             return false;
         }
-
-        foreach (Surface surface in _surfaces)
-        {
-            if (!IsSurfaceHealthy(surface.AttachmentHandle, _layer) ||
-                !IsContentHealthy(surface.Handle, _layer, surface.NativeHost) || surface.Source.IsDisposed ||
-                !surface.Window.IsVisible || !surface.View.IsLoaded ||
-                surface.Source.CompositionTarget.UsesPerPixelOpacity)
-                return false;
-        }
-        return true;
     }
 
     /// <summary>Local diagnostic text; excludes window titles, user names and file paths.</summary>
@@ -217,10 +226,11 @@ internal sealed class DesktopHost : IDisposable
             AppendWindowDiagnostic(text, $"Bloom WPF content {index}", surface.Handle);
             text.AppendLine($"  WPF visible={surface.Window.IsVisible}; loaded={surface.View.IsLoaded}; view visible={surface.View.IsVisible}; size={surface.View.ActualWidth:F1}x{surface.View.ActualHeight:F1}; opacity={surface.Window.Opacity:F2}; source disposed={surface.Source.IsDisposed}");
             text.AppendLine($"  Media: {surface.View.DiagnosticState}");
-            if (!surface.Source.IsDisposed)
-                text.AppendLine($"  WPF per-pixel layer={surface.Source.CompositionTarget.UsesPerPixelOpacity}; render mode={surface.Source.CompositionTarget.RenderMode}; root visual={surface.Source.RootVisual is not null}");
+            if (!surface.Source.IsDisposed && surface.Source.CompositionTarget is { } target)
+                text.AppendLine($"  WPF per-pixel layer={target.UsesPerPixelOpacity}; render mode={target.RenderMode}; root visual={surface.Source.RootVisual is not null}");
             if (layer is not null)
                 text.AppendLine($"  Attachment healthy={IsSurfaceHealthy(surface.AttachmentHandle, layer)}; content healthy={IsContentHealthy(surface.Handle, layer, surface.NativeHost)}");
+            text.AppendLine($"  Expected screen bounds={surface.Bounds}; attachment geometry={HasExpectedGeometry(surface.AttachmentHandle, surface.Bounds)}; content geometry={HasExpectedGeometry(surface.Handle, surface.Bounds)}");
         }
         return text.ToString();
     }
@@ -267,7 +277,7 @@ internal sealed class DesktopHost : IDisposable
             nint handle = new WindowInteropHelper(window).EnsureHandle();
             HwndSource source = HwndSource.FromHwnd(handle)
                 ?? throw new InvalidOperationException("Could not create a wallpaper window.");
-            surface = new Surface(window, view, source, handle, nativeHost);
+            surface = new Surface(window, view, source, handle, nativeHost, display.Bounds);
             _surfaces.Add(surface);
             source.AddHook(WindowMessage);
 
@@ -284,7 +294,8 @@ internal sealed class DesktopHost : IDisposable
             // WPF's Show performs its own initial sizing. Reapply the native
             // bounds afterward, in physical pixels, including negative origins.
             PositionWindow(handle, display.Bounds, layer, nativeHost);
-            if (!IsSurfaceHealthy(surface.AttachmentHandle, layer) || !IsContentHealthy(handle, layer, nativeHost))
+            if (!IsSurfaceHealthy(surface.AttachmentHandle, layer) || !IsContentHealthy(handle, layer, nativeHost) ||
+                !HasExpectedGeometry(surface.AttachmentHandle, display.Bounds) || !HasExpectedGeometry(handle, display.Bounds))
                 throw new InvalidOperationException("Windows did not preserve the visible wallpaper layer and icon order.");
         }
         catch
@@ -402,6 +413,26 @@ internal sealed class DesktopHost : IDisposable
             (Native.GetStyle(handle, Native.GwlExStyle) & Native.WsExLayered) != 0)
             return false;
         return !layer.Nested || nativeHost?.IsOpaqueLayered == true;
+    }
+
+    internal static bool HasExpectedGeometry(nint handle, Rectangle bounds)
+    {
+        // Parent and child handles can remain valid while display/DPI changes
+        // move, resize or clip their content. Compare in physical screen pixels.
+        using var dpi = new DpiContext(Native.PerMonitorV2);
+        if (!Native.IsWindow(handle) || !Native.GetWindowRect(handle, out Native.Rect actual) ||
+            actual.Left != bounds.Left || actual.Top != bounds.Top ||
+            actual.Right != bounds.Right || actual.Bottom != bounds.Bottom)
+            return false;
+
+        nint parent = Native.GetParent(handle);
+        if (parent == 0 || !Native.GetClientRect(parent, out Native.Rect client))
+            return false;
+        int mapped = Native.MapWindowPoints(0, parent, ref actual, 2);
+        if (mapped == 0 && Marshal.GetLastPInvokeError() != 0)
+            return false;
+        return actual.Left >= client.Left && actual.Top >= client.Top &&
+            actual.Right <= client.Right && actual.Bottom <= client.Bottom;
     }
 
     private nint WindowMessage(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
@@ -605,7 +636,7 @@ internal sealed class DesktopHost : IDisposable
     }
 
     private sealed record DisplayInfo(string DeviceName, Rectangle Bounds, uint DpiX, uint DpiY, bool Primary);
-    private sealed record Surface(Window Window, BloomView View, HwndSource Source, nint Handle, NativeDesktopSurface? NativeHost)
+    private sealed record Surface(Window Window, BloomView View, HwndSource Source, nint Handle, NativeDesktopSurface? NativeHost, Rectangle Bounds)
     {
         internal nint AttachmentHandle => NativeHost?.Handle ?? Handle;
     }

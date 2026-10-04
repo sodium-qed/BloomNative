@@ -114,6 +114,27 @@ internal static class DesktopAttachmentChecks
             Native.ShowWindow(outer, 0);
             CheckPixel(root, sampleX, sampleY, 0x000000, "hiding Bloom exposes the original fixture wallpaper");
 
+            // Structural attachment alone misses moved, resized or clipped
+            // windows. Exercise the same geometry checks used by maintenance.
+            Check(DesktopHost.HasExpectedGeometry(outer, target) && DesktopHost.HasExpectedGeometry(handle, target),
+                "production geometry health accepts correctly placed host and content");
+            Require(Native.SetWindowPos(handle, 0, 0, 0, 100, 80, 0x0002 | 0x0004 | 0x0010),
+                "Could not resize the owned WPF content.");
+            Check(!DesktopHost.HasExpectedGeometry(handle, target), "a resized WPF child is unhealthy even with its original parent");
+            DesktopHost.PositionWindow(handle, target, layer, host);
+            Require(Native.SetWindowPos(outer, 0, 16, 16, 0, 0, 0x0001 | 0x0004 | 0x0010),
+                "Could not move the owned native host.");
+            Check(!DesktopHost.HasExpectedGeometry(outer, target), "a shifted native host is unhealthy even with correct Z-order");
+            DesktopHost.PositionWindow(outer, target, layer);
+            Require(Native.SetWindowPos(root, 0, 0, 0, 120, 90, 0x0002 | 0x0004 | 0x0010),
+                "Could not shrink the owned parent for clipping verification.");
+            Check(HasBounds(outer, target) && !DesktopHost.HasExpectedGeometry(outer, target),
+                "a parent-clipped host is unhealthy even when its own bounds remain correct");
+            Require(Native.SetWindowPos(root, 0, 0, 0, 240, 180, 0x0002 | 0x0004 | 0x0010),
+                "Could not restore the owned parent dimensions.");
+            Check(DesktopHost.HasExpectedGeometry(outer, target) && DesktopHost.HasExpectedGeometry(handle, target),
+                "restored geometry makes host and content healthy again");
+
             // Check negative monitor coordinates after screen-pixel checks finish.
             Rectangle virtualScreen = System.Windows.Forms.SystemInformation.VirtualScreen;
             Require(Native.SetWindowPos(root, 0, virtualScreen.Left - 800, virtualScreen.Top - 600, 0, 0,
@@ -131,8 +152,19 @@ internal static class DesktopAttachmentChecks
             Check(!Native.IsWindow(handle) && !Native.IsWindow(outer), "cleanup destroys both application-owned HWNDs");
             Check(Native.IsWindow(root) && Native.IsWindow(icons) && Native.IsWindow(stock), "cleanup preserves the fixture shell windows");
             Check(Native.GetWindow(root, 5) == icons && Native.GetWindow(icons, 2) == stock, "cleanup restores original fixture ordering");
+
+            // Explorer can destroy our native child before DesktopHost.Stop.
+            // Its owner must release the stale HWND before Windows can reuse it.
+            host = DesktopHost.CreateNativeHost(target, layer);
+            nint destroyedHost = host!.Handle;
             Native.DestroyWindow(root);
             root = 0;
+            Check(!Native.IsWindow(destroyedHost) && host.Handle == 0 && !host.IsAlive,
+                "parent destruction immediately clears the native host's owned handle");
+            host.Dispose();
+            host.Dispose();
+            host = null;
+            Check(!Native.IsWindow(destroyedHost), "native-host disposal remains safe after external destruction");
 
             // Classic attachment has a normal redirected native parent and an
             // ordinary WPF child, without an additional layered native host.
@@ -175,7 +207,7 @@ internal static class DesktopAttachmentChecks
             CheckPixel(root, rootRect.Left + 120, rootRect.Top + 90, 0x000000, "classic cleanup reveals the underlying fixture background");
 
             return new Result(true, assertions,
-                "Owned on-screen DWM fixture: native constant-alpha host plus opaque WPF child under a no-redirection parent, sampled color changes/icon occlusion, classic opaque rendering, geometry and cleanup. No real Explorer discovery/DefView behavior, artwork, playback, camera or hardware validation.", true);
+                "Owned on-screen DWM fixture: native constant-alpha host plus opaque WPF child under a no-redirection parent, sampled color changes/icon occlusion, classic opaque rendering, geometry/clipping health and externally destroyed host cleanup. No real Explorer discovery/DefView behavior, artwork, playback, camera or hardware validation.", true);
         }
         finally
         {

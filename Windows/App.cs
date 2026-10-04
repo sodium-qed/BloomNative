@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Windows;
@@ -33,9 +34,15 @@ internal sealed class App : Application
                     global::Windows.Foundation.Metadata.ApiInformation.IsTypePresent("Windows.Media.Capture.Frames.MediaFrameReader");
                 bool cameraPixelCopy = cameraApiAvailable && CameraCapture.CheckPixelConversion();
                 passed &= cameraApiAvailable && cameraPixelCopy;
+                string assemblyVersion = typeof(App).Assembly.GetName().Version!.ToString(3);
+                bool versionMatches = assemblyVersion == ApplicationInfo.Version;
+                passed &= versionMatches;
                 File.WriteAllText(options.TestOutput!, JsonSerializer.Serialize(new
                 {
                     passed,
+                    version = ApplicationInfo.Version,
+                    build = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
+                    versionMatches,
                     runtime = Environment.Version.ToString(),
                     os = Environment.OSVersion.ToString(),
                     desktopAttachment = new { passed = desktopAttachment.Passed, assertions = desktopAttachment.Assertions,
@@ -55,7 +62,7 @@ internal sealed class App : Application
             using var mutex = new Mutex(true, "Local\\BloomNative.Windows.Controls", out bool first);
             if (!first)
             {
-                MessageBox.Show("You opened Bloom Native Windows 0.1.4, but another Bloom instance is already running. Quit that instance from its controls or tray menu, then open this file again.", "Bloom Native · Windows 0.1.4");
+                MessageBox.Show($"You opened Bloom Native Windows {ApplicationInfo.Version}, but another Bloom instance is already running. Quit that instance from its controls or tray menu, then open this file again.", ApplicationInfo.DisplayName);
                 return 0;
             }
             var controls = new MainWindow();

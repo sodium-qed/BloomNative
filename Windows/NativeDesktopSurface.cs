@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -14,6 +15,7 @@ internal sealed class NativeDesktopSurface : IDisposable
     private const string ClassName = "BloomNativeDesktopSurface";
     private static readonly object RegistrationGate = new();
     private static readonly Native.WindowProcedure Procedure = WindowMessage;
+    private static readonly Dictionary<nint, NativeDesktopSurface> LiveSurfaces = new();
     private static bool registered;
     private nint handle;
 
@@ -29,6 +31,8 @@ internal sealed class NativeDesktopSurface : IDisposable
             0, 0, 1, 1, parent, 0, Native.GetModuleHandle(null), 0);
         if (handle == 0)
             throw new Win32Exception(Marshal.GetLastPInvokeError(), "Could not create the desktop composition surface.");
+        lock (RegistrationGate)
+            LiveSurfaces.Add(handle, this);
         if (!Native.SetLayeredWindowAttributes(handle, 0, 255, 0x00000002)) // LWA_ALPHA only
         {
             int error = Marshal.GetLastPInvokeError();
@@ -39,13 +43,15 @@ internal sealed class NativeDesktopSurface : IDisposable
 
     internal nint Handle => handle;
 
-    internal bool IsOpaqueLayered => handle != 0 && Native.IsWindow(handle) &&
+    internal bool IsAlive => IsOwnedWindow(handle);
+
+    internal bool IsOpaqueLayered => IsAlive &&
         Native.GetLayeredWindowAttributes(handle, out _, out byte alpha, out uint flags) &&
         alpha == 255 && flags == 0x00000002;
 
     internal void Show()
     {
-        ObjectDisposedException.ThrowIf(handle == 0, this);
+        ObjectDisposedException.ThrowIf(!IsAlive, this);
         Native.ShowWindow(handle, 4); // SW_SHOWNOACTIVATE
     }
 
@@ -53,12 +59,19 @@ internal sealed class NativeDesktopSurface : IDisposable
     {
         nint old = handle;
         handle = 0;
-        if (old == 0 || !Native.IsWindow(old)) return;
-        Native.GetWindowThreadProcessId(old, out uint process);
-        var name = new StringBuilder(128);
-        Native.GetClassName(old, name, name.Capacity);
-        if (process == (uint)Environment.ProcessId && name.ToString() == ClassName)
+        lock (RegistrationGate)
+            LiveSurfaces.Remove(old);
+        if (IsOwnedWindow(old))
             Native.DestroyWindow(old);
+    }
+
+    private static bool IsOwnedWindow(nint window)
+    {
+        if (window == 0 || !Native.IsWindow(window)) return false;
+        Native.GetWindowThreadProcessId(window, out uint process);
+        var name = new StringBuilder(128);
+        Native.GetClassName(window, name, name.Capacity);
+        return process == (uint)Environment.ProcessId && name.ToString() == ClassName;
     }
 
     private static void EnsureClass()
@@ -81,6 +94,14 @@ internal sealed class NativeDesktopSurface : IDisposable
 
     private static nint WindowMessage(nint window, uint message, nint wParam, nint lParam)
     {
+        if (message == 0x0082) // WM_NCDESTROY, including destruction by Explorer
+        {
+            lock (RegistrationGate)
+            {
+                if (LiveSurfaces.Remove(window, out NativeDesktopSurface? owner))
+                    owner.handle = 0;
+            }
+        }
         if (message == 0x0084) return -1; // WM_NCHITTEST: HTTRANSPARENT
         if (message == 0x0021) return 3; // WM_MOUSEACTIVATE: MA_NOACTIVATE
         return Native.DefWindowProc(window, message, wParam, lParam);
