@@ -17,16 +17,21 @@ namespace BloomNative.Windows;
 /// Explicit, local camera controls. Frames and calibration live only in memory;
 /// this window never starts capture automatically or hides capture in the tray.
 /// </summary>
-internal sealed class CameraTrackingWindow : Window
+internal sealed partial class CameraTrackingWindow : Window
 {
     private readonly bool chinese;
+    private readonly Action calibrationChime;
     private readonly CameraCapture capture = new();
     private readonly CameraMotionTracker motion = new();
+    private readonly CameraBrightnessTracker brightness = new();
     private readonly SemaphoreSlim motionGate = new(1, 1);
     private readonly CancellationTokenSource lifetime = new();
-    private readonly ComboBox cameras;
+    private readonly ComboBox cameras, trackingMode;
     private readonly Button refresh, start, stop, folded, unfolded, reset;
+    private readonly Button calibrateBrightness;
     private readonly TextBlock indicator, status, estimate;
+    private readonly TextBlock brightnessReading, brightnessInstructions, motionInstructions, motionSteps, modeNote;
+    private readonly WrapPanel motionCalibrationRow;
     private readonly Image preview;
     private readonly Grid previewStage;
     private readonly Canvas overlay;
@@ -37,7 +42,7 @@ internal sealed class CameraTrackingWindow : Window
     private CameraFrame? pendingFrame, displayedFrame;
     private WriteableBitmap? bitmap;
     private int frameQueued, generation, cameraGeneration;
-    private long lastFrameTick;
+    private long lastFrameTick, lastDisplayedFrameTick;
     private TimeSpan? lastProcessedTimestamp;
     private string? calibrationNotice;
     private bool starting, stopping, closed, closeAllowed, closing, enumerating;
@@ -46,14 +51,18 @@ internal sealed class CameraTrackingWindow : Window
     private Point dragStart;
     private Rect selectedPreview;
     private CameraMotionState lastState = CameraMotionState.NotInitialized;
+    private bool BrightnessMode => trackingMode.SelectedIndex == 0;
+    private bool BrightnessCalibrating => brightness.LastResult.Stage is CameraBrightnessStage.OpenSettling
+        or CameraBrightnessStage.WaitingForDark or CameraBrightnessStage.FoldedSettling;
 
     public event Action<double>? ProgressChanged;
     public event Action<bool>? TrackingChanged;
     public bool IsCameraRunning => capture.IsRunning;
 
-    public CameraTrackingWindow(bool chinese)
+    public CameraTrackingWindow(bool chinese, Action? calibrationChime = null)
     {
         this.chinese = chinese;
+        this.calibrationChime = calibrationChime ?? PlayCalibrationChime;
         Title = T("Camera experiment · Bloom Native", "摄像头实验 · Bloom Native");
         Width = 850; Height = 900; MinWidth = 650; MinHeight = 640;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -63,13 +72,19 @@ internal sealed class CameraTrackingWindow : Window
 
         var body = new StackPanel { Margin = new Thickness(24) };
         Content = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        body.Children.Add(new TextBlock { Text = T("Camera motion — experimental", "摄像头运动估计（实验性）"), FontSize = 26, FontWeight = FontWeights.SemiBold });
+        body.Children.Add(new TextBlock { Text = T("Camera control — experimental", "摄像头控制（实验性）"), FontSize = 26, FontWeight = FontWeights.SemiBold });
         body.Children.Add(Paragraph(T(
-            "This estimates relative unfolding from the camera image, not a hinge angle. Use a camera built into the moving lid; a stationary external webcam cannot measure lid movement.",
-            "通过摄像头画面估计相对展开程度，不测量铰链角度。请使用随屏幕盖移动的内置摄像头；固定的外接摄像头无法测量开盖运动。")));
+            "Use the camera built into the moving lid to control Bloom. Choose brightness for hands-free calibration, or track a stationary background. Neither mode measures hinge degrees.",
+            "使用随屏幕盖移动的内置摄像头控制 Bloom。亮度模式可自动校准，也可选择追踪固定背景。两种模式均不测量铰链角度。")));
         body.Children.Add(Paragraph(T(
             "Camera use starts only when you press Start camera. Processing stays on this PC. No video or audio is saved or sent. Closing this window stops the camera; minimizing keeps it on.",
             "仅在点击“启动摄像头”后启用。本机处理，不保存或发送视频、音频。关闭此窗口会停止摄像头；最小化时仍保持开启。")));
+
+        trackingMode = new ComboBox { Margin = new Thickness(0, 12, 0, 0), MinWidth = 280, HorizontalAlignment = HorizontalAlignment.Left };
+        trackingMode.Items.Add(T("Webcam brightness — hands-free calibration", "摄像头亮度 — 自动校准"));
+        trackingMode.Items.Add(T("Background motion — select a target", "背景运动 — 选择目标"));
+        trackingMode.SelectedIndex = 0;
+        body.Children.Add(trackingMode);
 
         var cameraRow = new WrapPanel { Margin = new Thickness(0, 10, 0, 4) };
         cameras = new ComboBox { MinWidth = 260, MaxWidth = 400, DisplayMemberPath = nameof(CameraDevice.Name), Margin = new Thickness(0, 0, 10, 8), VerticalContentAlignment = VerticalAlignment.Center };
@@ -93,25 +108,38 @@ internal sealed class CameraTrackingWindow : Window
         overlay.LostMouseCapture += (_, _) => { if (dragging) { dragging = false; selection.Visibility = Visibility.Collapsed; } };
         previewStage.Children.Add(preview); previewStage.Children.Add(overlay);
         body.Children.Add(previewStage);
-        body.Children.Add(Paragraph(T(
+        brightnessReading = new TextBlock { Margin = new Thickness(0, 8, 0, 0), FontWeight = FontWeights.SemiBold };
+        body.Children.Add(brightnessReading);
+        brightnessInstructions = Paragraph(T(
+            "Keep the lid comfortably open and press Calibrate hands-free. Keep it still until the first chime, then lower it to your chosen folded position without closing it completely. Hold still until the second chime. No buttons are needed while the lid is lowered. Calibration times out after 45 seconds; Reset calibration cancels it.",
+            "将屏幕盖打开到舒适位置，点击“自动校准”。保持不动，听到第一声提示后降低屏幕盖到希望对应折叠状态的位置，但不要完全合盖。保持不动，直到第二声提示。降低屏幕盖后无需按键。校准将在 45 秒后超时；“重置校准”可取消。"));
+        body.Children.Add(brightnessInstructions);
+        motionInstructions = Paragraph(T(
             "1. Keep the laptop base and background still. Set a comfortable lid opening for 0% (folded); do not close the lid. Drag a rectangle over a textured, stationary background patch. Do not select your face, hands or another screen.",
-            "1. 保持电脑底座和背景静止，将屏幕盖放在一个舒适的 0%（折叠）位置，不要合盖。拖出矩形，选择有纹理的固定背景。不要选择脸、手或其他屏幕。")));
-        body.Children.Add(Paragraph(T(
+            "1. 保持电脑底座和背景静止，将屏幕盖放在一个舒适的 0%（折叠）位置，不要合盖。拖出矩形，选择有纹理的固定背景。不要选择脸、手或其他屏幕。"));
+        body.Children.Add(motionInstructions);
+        motionSteps = Paragraph(T(
             "2. Capture folded. Move only the lid while keeping that patch in view, then capture unfolded at the opening you want to map to 100%. Tracking starts after both captures.",
-            "2. 记录折叠位置。仅移动屏幕盖，始终让所选背景留在画面中，再在希望对应 100% 的位置记录展开位置。记录两个端点后开始跟踪。")));
+            "2. 记录折叠位置。仅移动屏幕盖，始终让所选背景留在画面中，再在希望对应 100% 的位置记录展开位置。记录两个端点后开始跟踪。"));
+        body.Children.Add(motionSteps);
 
-        var calibrationRow = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+        calibrateBrightness = MakeButton(T("Calibrate hands-free", "自动校准"), () => { StartBrightnessCalibration(); return Task.CompletedTask; });
+        calibrateBrightness.HorizontalAlignment = HorizontalAlignment.Left;
+        calibrateBrightness.Margin = new Thickness(0, 10, 0, 8);
+        body.Children.Add(calibrateBrightness);
+        motionCalibrationRow = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
         folded = MakeButton(T("Capture folded (0%)", "记录折叠位置（0%）"), async () => await CaptureEndpointAsync(false));
         unfolded = MakeButton(T("Capture unfolded (100%)", "记录展开位置（100%）"), async () => await CaptureEndpointAsync(true));
         reset = MakeButton(T("Reset calibration", "重置校准"), async () => await ResetCalibrationAsync());
-        calibrationRow.Children.Add(folded); calibrationRow.Children.Add(unfolded); calibrationRow.Children.Add(reset);
-        body.Children.Add(calibrationRow);
+        motionCalibrationRow.Children.Add(folded); motionCalibrationRow.Children.Add(unfolded);
+        body.Children.Add(motionCalibrationRow);
+        reset.HorizontalAlignment = HorizontalAlignment.Left;
+        body.Children.Add(reset);
         estimate = new TextBlock { FontSize = 19, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 6), Text = T("Estimated unfolding: not calibrated", "估计展开程度：尚未校准") };
         status = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DarkSlateGray, Margin = new Thickness(0, 2, 0, 10) };
         body.Children.Add(estimate); body.Children.Add(status);
-        body.Children.Add(Paragraph(T(
-            "A lost target freezes the last estimate. Select a background patch again and recalibrate to resume. Moving the base, background or camera can invalidate the estimate. Calibration is cleared when the camera stops.",
-            "目标丢失时保持最后的估计值。请重新选择背景并校准以恢复。底座、背景或摄像头移动均可能使估计失效。停止摄像头会清除校准。")));
+        modeNote = Paragraph("");
+        body.Children.Add(modeNote);
 
         capture.FrameArrived += OnFrame;
         capture.Failed += OnCameraFailed;
@@ -122,6 +150,7 @@ internal sealed class CameraTrackingWindow : Window
         frameWatchdog.Tick += async (_, _) => await CheckFrameWatchdogAsync();
         Loaded += async (_, _) => await LoadCamerasAsync();
         Closing += OnClosing;
+        trackingMode.SelectionChanged += (_, _) => UpdateControls();
         UpdateControls();
     }
 
@@ -186,7 +215,9 @@ internal sealed class CameraTrackingWindow : Window
                 return;
             Interlocked.Exchange(ref lastFrameTick, Stopwatch.GetTimestamp());
             frameWatchdog.Start();
-            status.Text = T("Camera on. Set the folded position and drag a rectangle over a stationary background patch.", "摄像头已开启。放到折叠位置，然后拖出矩形选择固定背景。");
+            status.Text = BrightnessMode
+                ? T("Camera on. Keep the lid comfortably open, then press Calibrate hands-free.", "摄像头已开启。将屏幕盖打开到舒适位置，再点击“自动校准”。")
+                : T("Camera on. Set the folded position and drag a rectangle over a stationary background patch.", "摄像头已开启。放到折叠位置，然后拖出矩形选择固定背景。");
         }
         catch (OperationCanceledException) { }
         catch (Exception error)
@@ -210,6 +241,7 @@ internal sealed class CameraTrackingWindow : Window
         frameWatchdog.Stop();
         generation++;
         cameraGeneration++;
+        brightness.Reset();
         startCancellation?.Cancel();
         SetTracking(false);
         CancelSelection();
@@ -228,8 +260,10 @@ internal sealed class CameraTrackingWindow : Window
             lastState = CameraMotionState.NotInitialized;
             Interlocked.Exchange(ref pendingFrame, null);
             displayedFrame = null; bitmap = null; preview.Source = null;
+            lastDisplayedFrameTick = 0;
             lastProcessedTimestamp = null;
             estimate.Text = T("Estimated unfolding: not calibrated", "估计展开程度：尚未校准");
+            brightnessReading.Text = T("Live brightness: camera off", "实时亮度：摄像头已关闭");
             status.Text = T("Camera stopped. Calibration and in-memory frames cleared.", "摄像头已停止，校准和内存中的画面已清除。");
         }
         finally { stopping = false; if (!closed) UpdateControls(); }
@@ -275,6 +309,14 @@ internal sealed class CameraTrackingWindow : Window
             }
             bitmap.WritePixels(new Int32Rect(0, 0, frame.Width, frame.Height), frame.Bgra, frame.Width * 4, 0);
             displayedFrame = frame;
+            lastDisplayedFrameTick = Stopwatch.GetTimestamp();
+            if (BrightnessMode)
+            {
+                CameraBrightnessStage previousStage = brightness.LastResult.Stage;
+                CameraBrightnessResult brightnessResult = brightness.Process(frame.Gray, frame.Width, frame.Height, frame.Timestamp);
+                ShowBrightnessResult(brightnessResult, previousStage);
+                return;
+            }
             if (!initialized || initializing || endpointBusy) return;
 
             CameraMotionResult result;
@@ -293,8 +335,12 @@ internal sealed class CameraTrackingWindow : Window
             if (!closed && !closing && !stopping)
             {
                 initialized = false;
+                brightness.Reset();
+                calibrated = false;
                 SetTracking(false);
-                status.Text = T("Tracking stopped. Select a new target to recalibrate. ", "跟踪已停止，请重新选择目标校准。 ") + error.Message;
+                status.Text = (BrightnessMode
+                    ? T("Brightness processing stopped. Press Calibrate hands-free to try again. ", "亮度处理已停止。点击“自动校准”重试。 ")
+                    : T("Tracking stopped. Select a new target to recalibrate. ", "跟踪已停止，请重新选择目标校准。 ")) + error.Message;
                 UpdateControls();
             }
         }
@@ -304,6 +350,73 @@ internal sealed class CameraTrackingWindow : Window
             if (Volatile.Read(ref pendingFrame) is not null && capture.IsRunning && !stopping && !closed && !closing)
                 QueueFrame();
         }
+    }
+
+    private void StartBrightnessCalibration()
+    {
+        if (!BrightnessMode || !capture.IsRunning || starting || stopping || closing || closed ||
+            BrightnessCalibrating || displayedFrame is not CameraFrame frame) return;
+        if (Stopwatch.GetElapsedTime(Interlocked.Read(ref lastFrameTick)) > TimeSpan.FromMilliseconds(500) ||
+            lastDisplayedFrameTick == 0 || Stopwatch.GetElapsedTime(lastDisplayedFrameTick) > TimeSpan.FromMilliseconds(500))
+        {
+            status.Text = T("Waiting for a fresh camera frame. Try calibration again when the preview updates.", "正在等待新的摄像头画面。预览更新后请重试校准。");
+            return;
+        }
+        generation++;
+        Interlocked.Exchange(ref pendingFrame, null);
+        SetTracking(false);
+        calibrated = false;
+        brightness.StartCalibration(frame.Timestamp);
+        estimate.Text = T("Estimated unfolding: calibrating…", "估计展开程度：正在校准……");
+        ShowBrightnessResult(brightness.LastResult, CameraBrightnessStage.Idle);
+    }
+
+    private void ShowBrightnessResult(CameraBrightnessResult result, CameraBrightnessStage previousStage)
+    {
+        brightnessReading.Text = T($"Live brightness: {result.Brightness:P0}", $"实时亮度：{result.Brightness:P0}");
+        if (result.Stage == CameraBrightnessStage.Idle)
+        {
+            status.Text = T("Keep the lid comfortably open, then press Calibrate hands-free. No target selection is needed.", "将屏幕盖打开到舒适位置，再点击“自动校准”。无需选择背景目标。");
+        }
+        else if (result.Stage == CameraBrightnessStage.OpenSettling)
+        {
+            status.Text = T("Keep the lid open and still. Measuring open brightness… Wait for the first chime before lowering it.", "保持屏幕盖打开且不动。正在测量展开亮度……听到第一声提示后再降低屏幕盖。");
+        }
+        else if (result.Stage == CameraBrightnessStage.WaitingForDark)
+        {
+            status.Text = T("Open brightness captured. Lower the lid to your chosen folded position and hold still. Do not close it completely; wait for the second chime.", "已记录展开亮度。降低屏幕盖到希望对应折叠状态的位置并保持不动。不要完全合盖；等待第二声提示。");
+            if (previousStage == CameraBrightnessStage.OpenSettling) calibrationChime();
+        }
+        else if (result.Stage == CameraBrightnessStage.FoldedSettling)
+        {
+            status.Text = T("Darker position detected. Hold the lid still until the second chime…", "已检测到较暗的位置。保持屏幕盖不动，等待第二声提示……");
+        }
+        else if (result.Stage == CameraBrightnessStage.Tracking)
+        {
+            calibrated = true;
+            SetTracking(true);
+            if (result.Progress is double progress && double.IsFinite(progress))
+            {
+                estimate.Text = T($"Brightness unfolding: {progress:P0}", $"亮度展开程度：{progress:P0}");
+                ProgressChanged?.Invoke(progress);
+            }
+            status.Text = T("Calibration complete. Brightness controls Bloom; you can raise the lid now. Recalibrate if room lighting or camera exposure changes.", "校准完成。亮度正在控制 Bloom，现在可以抬起屏幕盖。环境光线或摄像头曝光变化后请重新校准。");
+            if (previousStage != CameraBrightnessStage.Tracking) calibrationChime();
+        }
+        else
+        {
+            estimate.Text = trackingActive
+                ? T("Brightness tracking stopped — last position held", "亮度追踪已停止 — 保持最后位置")
+                : T("Estimated unfolding: not calibrated", "估计展开程度：尚未校准");
+            status.Text = T("Brightness calibration needs another try. Open the lid and press Calibrate hands-free. ", "亮度校准需要重试。打开屏幕盖并点击“自动校准”。 ") + result.Message;
+        }
+        UpdateControls();
+    }
+
+    private static void PlayCalibrationChime()
+    {
+        try { System.Media.SystemSounds.Asterisk.Play(); }
+        catch (Exception) { /* Sound is optional; visible calibration state remains available. */ }
     }
 
     private void ShowResult(CameraMotionResult result)
@@ -342,7 +455,7 @@ internal sealed class CameraTrackingWindow : Window
 
     private void BeginSelection(object sender, MouseButtonEventArgs args)
     {
-        if (!capture.IsRunning || stopping || starting || initializing || endpointBusy || displayedFrame is null) return;
+        if (BrightnessMode || !capture.IsRunning || stopping || starting || initializing || endpointBusy || displayedFrame is null) return;
         Rect bounds = ImageBounds();
         Point point = args.GetPosition(overlay);
         if (bounds.IsEmpty || !bounds.Contains(point)) return;
@@ -473,6 +586,7 @@ internal sealed class CameraTrackingWindow : Window
     private async Task ResetCalibrationAsync()
     {
         int currentGeneration = ++generation;
+        brightness.Reset();
         initialized = foldedCaptured = calibrated = false;
         calibrationNotice = null;
         SetTracking(false); CancelSelection();
@@ -485,7 +599,9 @@ internal sealed class CameraTrackingWindow : Window
         }
         finally { motionGate.Release(); }
         estimate.Text = T("Estimated unfolding: not calibrated", "估计展开程度：尚未校准");
-        status.Text = T("Calibration cleared. Set the folded position and select a background patch again.", "校准已清除。请放到折叠位置并重新选择背景。");
+        status.Text = BrightnessMode
+            ? T("Calibration cleared. Open the lid, then press Calibrate hands-free to try again.", "校准已清除。打开屏幕盖，再点击“自动校准”重试。")
+            : T("Calibration cleared. Set the folded position and select a background patch again.", "校准已清除。请放到折叠位置并重新选择背景。");
         UpdateControls();
     }
 
@@ -501,13 +617,23 @@ internal sealed class CameraTrackingWindow : Window
         if (closed) return;
         bool running = capture.IsRunning;
         bool busy = starting || stopping || closing;
+        trackingMode.IsEnabled = !running && !busy;
         cameras.IsEnabled = !running && !busy && !enumerating;
         refresh.IsEnabled = !running && !busy && !enumerating;
         start.IsEnabled = !running && !busy && !enumerating && cameras.SelectedItem is CameraDevice;
         stop.IsEnabled = (running || starting) && !stopping && !closing;
-        folded.IsEnabled = running && initialized && lastState == CameraMotionState.Tracking && !busy && !initializing && !endpointBusy;
+        folded.IsEnabled = !BrightnessMode && running && initialized && lastState == CameraMotionState.Tracking && !busy && !initializing && !endpointBusy;
         unfolded.IsEnabled = folded.IsEnabled && foldedCaptured;
-        reset.IsEnabled = running && (initialized || calibrated) && !busy && !initializing && !endpointBusy;
+        reset.IsEnabled = running && (initialized || calibrated || brightness.LastResult.Stage != CameraBrightnessStage.Idle) && !busy && !initializing && !endpointBusy;
+        calibrateBrightness.IsEnabled = BrightnessMode && running && displayedFrame is not null && !busy && !BrightnessCalibrating;
+        calibrateBrightness.Content = BrightnessCalibrating ? T("Calibrating…", "正在校准……") : T("Calibrate hands-free", "自动校准");
+        brightnessInstructions.Visibility = brightnessReading.Visibility = calibrateBrightness.Visibility = BrightnessMode ? Visibility.Visible : Visibility.Collapsed;
+        motionInstructions.Visibility = motionSteps.Visibility = motionCalibrationRow.Visibility = BrightnessMode ? Visibility.Collapsed : Visibility.Visible;
+        overlay.IsHitTestVisible = !BrightnessMode;
+        if (!running) brightnessReading.Text = T("Live brightness: camera off", "实时亮度：摄像头已关闭");
+        modeNote.Text = BrightnessMode
+            ? T("Brightness is an experimental light-based control, not a measured lid angle. Room lighting, screen reflections, hands over the lens, and automatic camera exposure can affect it. Calibration requires a clear brightness difference and is cleared when the camera stops. Stop the camera before changing modes.", "亮度模式是实验性的光线控制，并非测量屏幕盖角度。环境光线、屏幕反光、遮挡镜头和摄像头自动曝光均可能影响结果。校准需要明显的亮度差，停止摄像头时会清除。切换模式前请先停止摄像头。")
+            : T("A lost target freezes the last estimate. Select a background patch again and recalibrate to resume. Moving the base, background or camera can invalidate the estimate. Calibration is cleared when the camera stops. Stop the camera before changing modes.", "目标丢失时保持最后的估计值。请重新选择背景并校准以恢复。底座、背景或摄像头移动均可能使估计失效。停止摄像头会清除校准。切换模式前请先停止摄像头。");
         indicator.Text = stopping ? T("Stopping camera…", "正在停止摄像头……")
             : starting ? T("Starting camera…", "正在启动摄像头……")
             : running ? T("● CAMERA ON — local processing", "● 摄像头已开启 — 本机处理")

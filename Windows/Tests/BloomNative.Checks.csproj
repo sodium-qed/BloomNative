@@ -12,5 +12,6 @@
     <Compile Include="../Settings.cs" Link="Settings.cs" />
     <Compile Include="../Artwork.cs" Link="Artwork.cs" />
     <Compile Include="../CameraMotion.cs" Link="CameraMotion.cs" />
+    <Compile Include="../CameraBrightness.cs" Link="CameraBrightness.cs" />
   </ItemGroup>
 </Project>

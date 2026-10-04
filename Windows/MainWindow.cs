@@ -132,12 +132,12 @@ internal sealed class MainWindow : Window
         var wake = new CheckBox { Content = T("Replay on wake / lid open", "唤醒或开盖时重播"), IsChecked = settings.ReplayOnWake, Margin = new Thickness(0, 0, 0, 12) };
         wake.Click += (_, _) => { settings.ReplayOnWake = wake.IsChecked == true; SaveSettings(); };
         options.Children.Add(breathe); options.Children.Add(wake); body.Children.Add(options);
-        body.Children.Add(new TextBlock { Text = T("Manual unfolding works on any PC. Experimental webcam tracking estimates lid movement against a stationary background; it does not measure a hinge angle.", "任何电脑都可手动调节展开程度。实验性摄像头追踪通过静止背景估计屏幕运动，并非测量铰链角度。"), TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DimGray, FontSize = 12, Margin = new Thickness(0, 0, 0, 14) });
+        body.Children.Add(new TextBlock { Text = T("Manual unfolding works on any PC. Experimental webcam control uses brightness with hands-free calibration, or tracks a stationary background. It does not measure a hinge angle.", "任何电脑都可手动调节展开程度。实验性摄像头控制支持自动亮度校准或固定背景追踪，并非测量铰链角度。"), TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DimGray, FontSize = 12, Margin = new Thickness(0, 0, 0, 14) });
         var actions = new WrapPanel();
         replay = Button(T("Replay unfolding", "重播展开动画"), Replay);
         saver = Button(T("Preview screen saver", "预览屏幕保护程序"), PreviewSaver);
         actions.Children.Add(replay); actions.Children.Add(saver);
-        actions.Children.Add(Button(T("Webcam tracking (experimental)…", "摄像头追踪（实验性）…"), OpenCameraTracking));
+        actions.Children.Add(Button(T("Webcam control (experimental)…", "摄像头控制（实验性）…"), OpenCameraTracking));
         actions.Children.Add(Button(T("Hide to tray", "隐藏到托盘"), Hide));
         actions.Children.Add(Button(T("Test desktop layer", "测试桌面图层"), TestDesktopLayer));
         actions.Children.Add(Button(T("Copy diagnostics", "复制诊断信息"), CopyDiagnostics));

@@ -37,6 +37,8 @@ internal sealed class App : Application
                     global::Windows.Foundation.Metadata.ApiInformation.IsTypePresent("Windows.Media.Capture.Frames.MediaFrameReader");
                 bool cameraPixelCopy = cameraApiAvailable && CameraCapture.CheckPixelConversion();
                 passed &= cameraApiAvailable && cameraPixelCopy;
+                var cameraControl = CameraControlChecks.Run();
+                passed &= cameraControl.Passed;
                 string assemblyVersion = typeof(App).Assembly.GetName().Version!.ToString(3);
                 bool versionMatches = assemblyVersion == ApplicationInfo.Version;
                 passed &= versionMatches;
@@ -55,7 +57,8 @@ internal sealed class App : Application
                         baselineRedColorRef = mediaComposition.BaselineRed, baselineCyanColorRef = mediaComposition.BaselineCyan },
                     cameraApiAvailable,
                     cameraPixelCopy,
-                    scope = "WPF initialization, owned on-screen HWND/DWM pixel fixture, conditional synthetic decoded-media composition, WinRT API availability and in-memory camera pixel conversion; no camera activation, creator artwork, real Explorer embedding, or hardware validation"
+                    cameraControl = new { passed = cameraControl.Passed, assertions = cameraControl.Assertions, scope = cameraControl.Scope },
+                    scope = "WPF initialization, owned on-screen HWND/DWM pixel fixture, conditional synthetic decoded-media composition, WinRT API availability, in-memory camera pixel conversion and hardware-free brightness-control UI checks; no camera activation, creator artwork, real Explorer embedding, or hardware validation"
                 }));
                 return passed ? 0 : 1;
             }

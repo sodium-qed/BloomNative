@@ -25,6 +25,7 @@ internal static class Program
             checks += ArtworkTransferChecks.Run(temporary);
             checks += DesktopRecoveryChecks.Run();
             checks += CameraMotionChecks.Run();
+            checks += CameraBrightnessChecks.Run();
             Console.WriteLine($"PASS: {checks} checks; no artwork downloaded and no Windows GUI required.");
             return 0;
         }
