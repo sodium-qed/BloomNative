@@ -74,6 +74,8 @@ Version **0.1.5** includes the desktop composition fix introduced in 0.1.4, plus
 
 This update also preserves the requested wallpaper state across temporary Explorer failures, retries with a bounded delay, detects surfaces that have moved or become clipped, and safely handles native windows destroyed during a shell restart. Turning the wallpaper off cancels recovery. Downloads now have a deadline covering the whole transfer, and imports verify a staged copy before replacing existing artwork. Initial artwork verification finishes before download/import controls become available.
 
+The decoded-video regression also exposed a separate playback defect: repeated pause commands after seeking could reset WPF's video position to the beginning before the first replay. Version 0.1.5 sends playback commands only when the transport state changes, so initial unfolding positions and paused slider changes are retained.
+
 To check the new build:
 
 1. **Quit** the old build from its notification-area menu. Extract the new bundle into a separate folder, start `BloomNative.Windows.exe`, and confirm the title shows **Windows 0.1.5**. Previously downloaded artwork is reused.

@@ -17,7 +17,7 @@ internal static class MediaCompositionChecks
 {
     internal sealed record Result(bool Verified, int Assertions, string Status, string Reason, string Scope,
         uint? BaselineRed = null, uint? BaselineCyan = null);
-    private const string Scope = "Synthetic H.264 red/cyan clip: ordinary MediaElement capability/color baseline, then production BloomView scrubbing under owned raised and classic desktop hosts, matching baseline pixels within 8 RGB levels. No creator artwork, real Explorer, camera or hardware validation.";
+    private const string Scope = "Synthetic H.264 red/cyan clip: ordinary MediaElement capability/color baseline, then production BloomView forward/backward scrubbing, paused activity refresh, and replay/stop under owned raised and classic desktop hosts, matching baseline pixels within 8 RGB levels. No creator artwork, real Explorer, camera or hardware validation.";
 
     internal static Result Run()
     {
@@ -37,7 +37,7 @@ internal static class MediaCompositionChecks
             int assertions = 2; // Both decoded baseline colors were visible.
             assertions += CheckProduction(path, bounds, nested: true, red, cyan);
             assertions += CheckProduction(path, bounds, nested: false, red, cyan);
-            return new Result(true, assertions, "verified", "Both decoded colors and production seek updates were visible in both host layouts.", Scope, red, cyan);
+            return new Result(true, assertions, "verified", "Decoded seeking, held frames and replay/stop were verified in both host layouts.", Scope, red, cyan);
         }
         finally
         {
@@ -159,6 +159,24 @@ internal static class MediaCompositionChecks
             CheckPixel(bounds.Left + 120, bounds.Top + 90, red, "production BloomView must display decoded red at 25%");
             view.SetProgress(0.75);
             CheckPixel(bounds.Left + 120, bounds.Top + 90, cyan, "production BloomView must display decoded cyan after seeking to 75%");
+            view.SetProgress(0.25);
+            CheckPixel(bounds.Left + 120, bounds.Top + 90, red, "backward seek must restore the decoded red frame");
+            view.SetProgress(0.75);
+            CheckPixel(bounds.Left + 120, bounds.Top + 90, cyan, "forward seek after a backward seek must restore cyan");
+            view.SetSuspended(true);
+            view.SetSuspended(false);
+            view.Breathe = false;
+            // Let asynchronous transport commands finish before testing that
+            // activity refresh preserved the held frame rather than rewound it.
+            WaitUntil(() => false, 250);
+            CheckPixel(bounds.Left + 120, bounds.Top + 90, cyan, "paused activity refresh must preserve the selected frame");
+            view.ReplayTo(0.75);
+            CheckPixel(bounds.Left + 120, bounds.Top + 90, red, "native replay must begin at the red start frame");
+            if (!WaitUntil(() => !view.IsReplaying, 10000) ||
+                Math.Abs(view.PlaybackPosition.TotalSeconds - (2 - 1.0 / 60) * 0.75) > 0.1)
+                throw new InvalidOperationException($"Synthetic media replay failed to stop at its selected position: {view.DiagnosticState}");
+            assertions++;
+            CheckPixel(bounds.Left + 120, bounds.Top + 90, cyan, "completed native replay must hold the selected cyan frame");
             if (nested)
                 CheckPixel(bounds.Left + 20, bounds.Top + 20, 0xFFFFFF, "owned icon marker must remain above decoded video");
             return assertions;

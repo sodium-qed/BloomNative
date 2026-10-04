@@ -29,10 +29,17 @@ public sealed class BloomView : UserControl, IDisposable
     private double lastTick;
     private double motionTime;
     private TimeSpan lastFrame;
+    private MediaState commandedState = MediaState.Close;
 
     public event Action<string>? PlaybackFailed;
 
-    internal string DiagnosticState => $"loaded={IsLoaded}, visible={IsVisible}, sourceAssigned={sourceAssigned}, mediaOpened={opened}, suspended={suspended}, replaying={replaying}, disposed={disposed}";
+    internal bool IsReplaying => replaying;
+    internal TimeSpan PlaybackPosition => media.Position;
+
+    internal string DiagnosticState => $"loaded={IsLoaded}, visible={IsVisible}, sourceAssigned={sourceAssigned}, mediaOpened={opened}, suspended={suspended}, replaying={replaying}, disposed={disposed}, " +
+        $"commandedState={commandedState}, position={(disposed ? "closed" : media.Position.ToString())}, target={TargetPosition}, " +
+        $"duration={(disposed ? "closed" : media.NaturalDuration.ToString())}, scrubbing={media.ScrubbingEnabled}, " +
+        $"mediaSize={media.ActualWidth:0.##}x{media.ActualHeight:0.##}, timerRunning={timer.IsEnabled}";
 
     public BloomView(string videoPath)
     {
@@ -116,7 +123,7 @@ public sealed class BloomView : UserControl, IDisposable
         replaying = false;
         if (opened)
         {
-            media.Pause();
+            SetPlaybackState(MediaState.Pause);
             media.Position = TargetPosition;
         }
         UpdateActivity();
@@ -130,7 +137,7 @@ public sealed class BloomView : UserControl, IDisposable
         replaying = target > 0;
         if (opened)
         {
-            media.Pause();
+            SetPlaybackState(MediaState.Pause);
             media.Position = TimeSpan.Zero;
         }
         UpdateActivity();
@@ -164,7 +171,7 @@ public sealed class BloomView : UserControl, IDisposable
                 media.Source = new Uri(Path.GetFullPath(videoPath), UriKind.Absolute);
                 // Manual MediaElement behavior needs an explicit command to open the source.
                 // Pause plus scrubbing decodes a still frame without starting a visible replay.
-                media.Pause();
+                SetPlaybackState(MediaState.Pause);
             }
             catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException || exception is ArgumentException || exception is NotSupportedException)
             {
@@ -188,7 +195,7 @@ public sealed class BloomView : UserControl, IDisposable
         // Seeking exactly to EOF can produce a black frame. Keep the final still before EOF.
         lastFrame = TimeSpan.FromSeconds(Math.Max(0, media.NaturalDuration.TimeSpan.TotalSeconds - 1.0 / 60.0));
         opened = true;
-        media.Pause();
+        SetPlaybackState(MediaState.Pause);
         media.Position = replaying ? TimeSpan.Zero : TargetPosition;
         UpdateActivity();
     }
@@ -208,7 +215,7 @@ public sealed class BloomView : UserControl, IDisposable
     private void FinishReplay()
     {
         replaying = false;
-        media.Pause();
+        SetPlaybackState(MediaState.Pause);
         media.Position = TargetPosition;
         UpdateActivity();
     }
@@ -218,8 +225,7 @@ public sealed class BloomView : UserControl, IDisposable
         if (disposed) return;
         if (opened)
         {
-            if (Active && replaying) media.Play();
-            else media.Pause();
+            SetPlaybackState(Active && replaying ? MediaState.Play : MediaState.Pause);
         }
         if (Active && opened && (replaying || MotionEnabled))
         {
@@ -235,6 +241,18 @@ public sealed class BloomView : UserControl, IDisposable
             timer.Stop();
             clock.Stop();
         }
+    }
+
+    private void SetPlaybackState(MediaState state)
+    {
+        if (commandedState == state) return;
+        // WPF forwards repeated transport commands. Before the first Play, its
+        // source-change flag can still be set, so another Pause reopens the same
+        // source and resets Position to zero. A seek must not be followed by a
+        // redundant Pause from UpdateActivity, visibility or breathing updates.
+        if (state == MediaState.Play) media.Play();
+        else media.Pause();
+        commandedState = state;
     }
 
     private void OnTick(object? sender, EventArgs args)
@@ -280,6 +298,7 @@ public sealed class BloomView : UserControl, IDisposable
         timer.Stop();
         clock.Stop();
         media.Close();
+        commandedState = MediaState.Close;
         PlaybackFailed?.Invoke(message);
     }
 
@@ -298,6 +317,7 @@ public sealed class BloomView : UserControl, IDisposable
         media.MediaFailed -= OnMediaFailed;
         media.MediaEnded -= OnMediaEnded;
         media.Close();
+        commandedState = MediaState.Close;
         media.Source = null;
         PlaybackFailed = null;
     }
